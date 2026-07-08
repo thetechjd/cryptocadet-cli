@@ -1,0 +1,43 @@
+{
+  "name": "@cryptocadet/cli",
+  "version": "0.1.0",
+  "description": "CryptoCadet v4 client package: agent hot-wallet signer + local policy engine (Base/USDC).",
+  "license": "UNLICENSED",
+  "type": "module",
+  "bin": {
+    "cryptocadet": "dist/cli/index.js",
+    "ccx": "dist/cli/index.js"
+  },
+  "exports": {
+    ".": "./dist/index.js",
+    "./policy": "./dist/policy/evaluate.js"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "publishConfig": {
+    "access": "restricted"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "prepack": "npm run build",
+    "prepublishOnly": "npm run typecheck && npm run test"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "ethers": "^6.13.0",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "^22.7.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  }
+}
