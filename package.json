@@ -1,12 +1,12 @@
 {
   "name": "@cryptocadet/cli",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "description": "CryptoCadet v4 client package: agent hot-wallet signer + local policy engine (Base/USDC).",
   "license": "UNLICENSED",
   "type": "module",
   "bin": {
-    "cryptocadet": "dist/cli/index.js",
-    "ccx": "dist/cli/index.js"
+    "cryptocadet": "dist/cli/bin.js",
+    "ccx": "dist/cli/bin.js"
   },
   "exports": {
     ".": "./dist/index.js",
@@ -14,19 +14,23 @@
   },
   "files": [
     "dist",
+    "!dist/bin",
+    "!dist/cli.cjs",
     "README.md"
   ],
   "engines": {
     "node": ">=22.5.0"
   },
   "publishConfig": {
-    "access": "restricted"
+    "access": "public"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run",
-    "test:watch": "vitest",
+    "test": "NODE_OPTIONS=--experimental-sqlite vitest run",
+    "test:watch": "NODE_OPTIONS=--experimental-sqlite vitest",
+    "bundle": "node packaging/build-binary.mjs --bundle-only",
+    "build:binary": "node packaging/build-binary.mjs",
     "prepack": "npm run build",
     "prepublishOnly": "npm run typecheck && npm run test"
   },
@@ -37,7 +41,14 @@
   },
   "devDependencies": {
     "@types/node": "^22.7.0",
+    "@yao-pkg/pkg": "^6.6.0",
+    "esbuild": "^0.24.0",
     "typescript": "^5.6.0",
     "vitest": "^2.1.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
   }
 }

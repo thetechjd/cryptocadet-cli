@@ -1,0 +1,145 @@
+# Release automation. Trigger: push a version tag.
+#
+#   npm version patch      # bumps package.json + makes the commit
+#   git push                # push the commit
+#   git push --tags         # push the tag  ->  this workflow runs
+#
+# On a pushed v* tag this:
+#   1) builds all 4 self-contained binaries + SHA256SUMS (@yao-pkg/pkg cross-compiles from Linux)
+#   2) creates the GitHub Release with those assets   (the brew/curl download target)
+#   3) publishes @cryptocadet/cli to npm
+#   4) (optional) updates Formula/cryptocadet.rb in the tap repo with the new version + sha256s
+#
+# Secrets to set in the CLI repo (Settings → Secrets and variables → Actions):
+#   NPM_TOKEN         — an npm automation token with publish rights to @cryptocadet  (required for step 3)
+#   TAP_GITHUB_TOKEN  — a PAT with contents:write on thetechjd/homebrew-cryptocadet-cli (optional; step 4)
+# GITHUB_TOKEN is provided automatically and is what creates the Release.
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write          # required for gh release create
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24      # node:sqlite is unflagged on 24 (matches the binary target)
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Build binaries + SHA256SUMS
+        run: pnpm run build:binary
+      - name: Derive version from tag
+        id: ver
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+      - name: Create GitHub Release with assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          assets="dist/bin/cryptocadet-macos-arm64.tar.gz dist/bin/cryptocadet-macos-x64.tar.gz \
+            dist/bin/cryptocadet-linux-x64.tar.gz dist/bin/cryptocadet-linux-arm64.tar.gz dist/bin/SHA256SUMS"
+          # Idempotent: create the release, or upload/replace assets if it already exists (e.g. a
+          # manual release was cut first, or the tag is re-run).
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" $assets --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" $assets --title "$GITHUB_REF_NAME" --generate-notes
+          fi
+      - name: Upload SHA256SUMS as a build artifact (for the tap job)
+        uses: actions/upload-artifact@v4
+        with:
+          name: sha256sums
+          path: dist/bin/SHA256SUMS
+
+  npm-publish:
+    needs: build-release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          registry-url: "https://registry.npmjs.org"
+      - run: pnpm install --frozen-lockfile
+      # `npm publish` runs prepublishOnly (typecheck + tests) and prepack (build) from package.json.
+      # Skips cleanly when NPM_TOKEN isn't configured (e.g. publishing by hand instead).
+      - name: Publish @cryptocadet/cli
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -z "$NODE_AUTH_TOKEN" ]; then
+            echo "NPM_TOKEN not set — skipping npm publish (publish by hand this release)."
+            exit 0
+          fi
+          npm publish
+
+  update-tap:
+    needs: build-release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check tap token is configured
+        id: guard
+        env:
+          TAP_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN }}
+        run: |
+          if [ -n "$TAP_TOKEN" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "TAP_GITHUB_TOKEN not set — skipping tap update (do it by hand this release)."
+          fi
+      - name: Checkout tap repo
+        if: steps.guard.outputs.enabled == 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: thetechjd/homebrew-cryptocadet-cli
+          token: ${{ secrets.TAP_GITHUB_TOKEN }}
+          path: tap
+      - name: Download SHA256SUMS
+        if: steps.guard.outputs.enabled == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: sha256sums
+          path: sums
+      - name: Rewrite formula with new version + sha256s
+        if: steps.guard.outputs.enabled == 'true'
+        env:
+          VERSION: ${{ needs.build-release.outputs.version }}
+        run: |
+          set -eu
+          F=tap/Formula/cryptocadet.rb
+          sha() { grep " cryptocadet-$1.tar.gz$" sums/SHA256SUMS | awk '{print $1}'; }
+          # version + the vX.Y.Z segment in every download URL
+          sed -i -E "s/^  version \"[^\"]+\"/  version \"${VERSION}\"/" "$F"
+          sed -i -E "s#/download/v[0-9]+\.[0-9]+\.[0-9]+/#/download/v${VERSION}/#g" "$F"
+          # per-arch sha256 — the line following each arch's url
+          for arch in macos-arm64 macos-x64 linux-arm64 linux-x64; do
+            h=$(sha "$arch")
+            [ -n "$h" ] || { echo "no sha for $arch"; exit 1; }
+            # Replace whatever is between the quotes (placeholder on first release, old hash after).
+            perl -0pi -e "s{(cryptocadet-${arch}\.tar\.gz\"\s*\n\s*(#\s*)?sha256 \")[^\"\n]+}{\${1}${h}}" "$F"
+          done
+      - name: Commit + push tap
+        if: steps.guard.outputs.enabled == 'true'
+        working-directory: tap
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/cryptocadet.rb
+          git commit -m "cryptocadet ${{ needs.build-release.outputs.version }}"
+          git push

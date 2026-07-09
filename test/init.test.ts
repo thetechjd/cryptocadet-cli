@@ -23,8 +23,13 @@ describe('banner', () => {
     // retired v3 taglines are never printed
     expect(b).not.toMatch(/multi-chain|SmartMoney/i);
   });
-  it('emits truecolor ANSI when color is on', () => {
-    expect(renderBanner({ color: true, columns: 100 })).toContain('\x1b[38;2;');
+  it('emits 24-bit truecolor when the terminal supports it', () => {
+    expect(renderBanner({ color: true, columns: 100, truecolor: true })).toContain('\x1b[38;2;');
+  });
+  it('falls back to 256-color when truecolor is unsupported (e.g. macOS Terminal.app)', () => {
+    const b = renderBanner({ color: true, columns: 100, truecolor: false });
+    expect(b).toContain('\x1b[38;5;'); // 256-color, not the ignored truecolor escape
+    expect(b).not.toContain('\x1b[38;2;');
   });
   it('falls back to the compact one-liner under 54 columns', () => {
     expect(renderBanner({ color: false, columns: 40 })).toBe(COMPACT_BANNER);

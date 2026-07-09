@@ -8,6 +8,22 @@ control (no smart account, no on-chain caveat enforcer), and signs ERC-20 paymen
 > This is the CLIENT package. The cryptocadet **server holds no keys and must never
 > import this module.**
 
+## Install
+
+```
+macOS:      brew install thetechjd/cryptocadet-cli/cryptocadet
+Linux:      curl -fsSL https://cryptocadet.app/install.sh | sh
+Node (any): npm i -g @cryptocadet/cli
+
+Then:       cryptocadet init
+```
+
+The brew and curl artifacts are self-contained binaries (Node 24 embedded) — no node,
+npm, or `node_modules` on the user's machine. The npm channel needs Node ≥ 22.5 (built-in
+`node:sqlite`). Windows: use the npm channel for v4.0. The curl installer is [install.sh](install.sh)
+at the repo root (served from https://cryptocadet.app/install.sh); the build script, Homebrew
+formula, and release checklist live in [packaging/](packaging/).
+
 ## The load-bearing guarantee
 
 Every signing decision passes through [`evaluate()`](src/policy/evaluate.ts) — pure,

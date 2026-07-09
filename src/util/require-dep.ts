@@ -35,7 +35,11 @@ export async function requireDep<T = unknown>(pkg: string, opts: RequireDepOptio
   } catch {
     /* not installed yet */
   }
-  if (opts.autoInstall === false) return null;
+  // In the self-contained brew/curl binary there is no npm and the snapshot is read-only,
+  // so the lazy-install path can never succeed — probe only. CRYPTOCADET_BINARY is set by
+  // the pkg build banner (packaging/build-binary.mjs). The npm channel leaves it unset and
+  // keeps the on-demand install from v4-05.
+  if (opts.autoInstall === false || process.env.CRYPTOCADET_BINARY === '1') return null;
 
   const spec = opts.version ? `${pkg}@${opts.version}` : pkg;
   const inst = detectInstaller();

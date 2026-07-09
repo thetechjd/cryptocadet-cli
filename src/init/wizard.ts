@@ -23,6 +23,10 @@ import { registerWithHost, claudeDesktopConfigPath, manualSnippet, detectMcpHost
 export type Role = 'buyer' | 'seller' | 'both';
 export type Network = 'base-sepolia' | 'base-mainnet';
 
+/** Canonical hosted CryptoCadet v4 server — the default the agent fetches quotes from. Override
+ *  with --server (or the interactive prompt) to point at a local/staging server. */
+export const DEFAULT_SERVER_URL = 'https://api.v4.cryptocadet.app';
+
 const NETWORK: Record<Network, { chainId: 8453 | 84532; rpcUrl: string }> = {
   'base-sepolia': { chainId: 84532, rpcUrl: 'https://sepolia.base.org' },
   'base-mainnet': { chainId: 8453, rpcUrl: 'https://mainnet.base.org' },
@@ -143,7 +147,8 @@ export async function runInit(opts: InitOptions, deps: InitDeps): Promise<InitSu
   let config: Config | null = fresh ? null : loadConfig();
 
   if (wantsBuyer && fresh) {
-    const serverBaseUrl = opts.serverBaseUrl ?? (opts.yes ? undefined : await io.prompt('CryptoCadet server URL', 'http://localhost:4000'));
+    const serverBaseUrl =
+      opts.serverBaseUrl ?? (opts.yes ? DEFAULT_SERVER_URL : await io.prompt('CryptoCadet server URL', DEFAULT_SERVER_URL));
     if (!serverBaseUrl) throw new Error('a server URL is required (--server) so the agent can fetch quotes');
     const serverQuotePubKey = opts.serverQuotePubKey ?? (await fetchServerPubKey(serverBaseUrl, fetchImpl));
 
