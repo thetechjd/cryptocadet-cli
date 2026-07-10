@@ -30,7 +30,7 @@ export function checkNode(min = '22.5.0'): NodeCheck {
   return { ok: satisfiesMin(process.versions.node, min), version: process.versions.node, required: min };
 }
 
-export type KeychainBackend = 'memory' | 'keytar' | 'secret-tool' | 'security' | 'wincred' | 'none';
+export type KeychainBackend = 'memory' | 'napi-keyring' | 'keytar' | 'secret-tool' | 'security' | 'wincred' | 'none';
 export interface KeychainCheck {
   backend: KeychainBackend;
   available: boolean;
@@ -41,16 +41,27 @@ function cliExists(cmd: string): boolean {
   return spawnSync('which', [cmd], { stdio: 'ignore' }).status === 0;
 }
 
-/** Detect the OS secret store the detached signer will unlock through. */
+async function canImport(pkg: string): Promise<boolean> {
+  try {
+    await import(/* @vite-ignore */ pkg as string);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Detect the OS secret store the detached signer will unlock through. Mirrors the backend
+ *  order in custody/keychain.ts: @napi-rs/keyring, then keytar, then the platform CLI. */
 export async function detectKeychainBackend(): Promise<KeychainCheck> {
   if (process.env.CRYPTOCADET_INSECURE_KEYCHAIN === '1') {
     return { backend: 'memory', available: true, note: 'in-memory keychain (INSECURE — testing only)' };
   }
-  try {
-    await import(/* @vite-ignore */ 'keytar' as string);
-    return { backend: 'keytar', available: true, note: 'native keytar' };
-  } catch {
-    /* not installed; fall back to platform CLI */
+  // Cross-platform native backend (macOS Keychain / Linux Secret Service / Windows Credential Manager).
+  if (await canImport('@napi-rs/keyring')) {
+    return { backend: 'napi-keyring', available: true, note: 'native @napi-rs/keyring' };
+  }
+  if (await canImport('keytar')) {
+    return { backend: 'keytar', available: true, note: 'native keytar (legacy)' };
   }
   if (process.platform === 'darwin') {
     const ok = cliExists('security');
@@ -61,11 +72,11 @@ export async function detectKeychainBackend(): Promise<KeychainCheck> {
     return {
       backend: 'secret-tool',
       available: ok,
-      note: ok ? 'libsecret (secret-tool)' : 'install libsecret-tools (secret-tool) or `npm i keytar`',
+      note: ok ? 'libsecret (secret-tool)' : 'install libsecret-tools (secret-tool) or `npm i -g @napi-rs/keyring`',
     };
   }
   if (process.platform === 'win32') {
-    return { backend: 'wincred', available: false, note: 'install `keytar` for Windows Credential Manager' };
+    return { backend: 'wincred', available: false, note: 'Windows needs the native store: `npm i -g @napi-rs/keyring`' };
   }
   return { backend: 'none', available: false, note: `no keychain backend for platform ${process.platform}` };
 }

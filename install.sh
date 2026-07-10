@@ -1,113 +1,136 @@
 #!/bin/sh
-# CryptoCadet installer — lives at the CLI repo root; served from https://cryptocadet.app/install.sh
-# (and reachable raw at https://raw.githubusercontent.com/thetechjd/cryptocadet-cli/main/install.sh).
+# CryptoCadet installer (macOS / Linux) — NODE-ENVIRONMENT build.
 #
 #   curl -fsSL https://cryptocadet.app/install.sh | sh
 #
-# Detects OS/arch, downloads the matching release archive, VERIFIES it against SHA256SUMS,
-# then installs the `cryptocadet` binary to /usr/local/bin (or ~/.local/bin without sudo).
-# An unverified binary is NEVER placed on PATH. POSIX sh — no bashisms.
+# The CLI is JavaScript. Instead of a per-platform compiled binary (fragile V8 bytecode, no
+# Windows path), this sets up a self-contained Node environment and installs the same npm
+# package that `npm i -g` and Homebrew use — so it behaves identically everywhere. It:
+#   1. installs a private, pinned Node (latest v24) under ~/.cryptocadet-cli/node, SHA256-verified
+#      against nodejs.org (unless you opt into a suitable system Node),
+#   2. npm-installs @cryptocadet/cli (+ its optional native keychain) under ~/.cryptocadet-cli/app,
+#   3. drops `cryptocadet` / `ccx` launchers on your PATH that run that Node against the CLI.
+#
+# Windows: use PowerShell -> https://cryptocadet.app/install.ps1  (or: npm i -g @cryptocadet/cli)
+# POSIX sh — no bashisms.
 set -eu
 
-# ── Config ────────────────────────────────────────────────────────────────────────────────
-# Canonical values in packaging/dist.config.sh; keep in sync.
-RELEASES_REPO="${CRYPTOCADET_RELEASES_REPO:-thetechjd/cryptocadet-cli}"
-# Pin to a release, or leave "latest" to resolve the newest published tag.
-VERSION="${CRYPTOCADET_VERSION:-latest}"
-BIN_NAME="cryptocadet"
-# ──────────────────────────────────────────────────────────────────────────────────────────
+# ── Config (override via env) ───────────────────────────────────────────────────────────────
+INSTALL_DIR="${CRYPTOCADET_INSTALL_DIR:-$HOME/.cryptocadet-cli}"
+BIN_DIR="${CRYPTOCADET_BIN_DIR:-}"                      # default chosen below
+NPM_SPEC="${CRYPTOCADET_NPM_SPEC:-@cryptocadet/cli}"    # pre-publish: github:thetechjd/cryptocadet-cli
+NODE_CHANNEL="${CRYPTOCADET_NODE_CHANNEL:-latest-v24.x}"
+USE_SYSTEM_NODE="${CRYPTOCADET_USE_SYSTEM_NODE:-0}"     # 1 = use a system Node >= 22.5 if present
+MIN_NODE_MAJOR=22
+MIN_NODE_MINOR=5
+# ────────────────────────────────────────────────────────────────────────────────────────────
 
-err() { printf 'error: %s\n' "$1" >&2; exit 1; }
+err()  { printf 'error: %s\n' "$1" >&2; exit 1; }
 info() { printf '%s\n' "$1" >&2; }
 have() { command -v "$1" >/dev/null 2>&1; }
 
-# ── Detect OS/arch and map to a release asset (must match build-binary.mjs TARGETS) ─────────
-osArchToAsset() {
-  os=$(uname -s)
-  arch=$(uname -m)
+download() { # <url> <dest>
+  if have curl; then curl -fsSL "$1" -o "$2"
+  elif have wget; then wget -qO "$2" "$1"
+  else err "need curl or wget"; fi
+}
+sha256_of() {
+  if have sha256sum; then sha256sum "$1" | awk '{print $1}'
+  elif have shasum; then shasum -a 256 "$1" | awk '{print $1}'
+  else err "no sha256 tool (sha256sum/shasum) — refusing unverified download"; fi
+}
+
+node_platform() {
+  os=$(uname -s); arch=$(uname -m)
   case "$os" in
-    Darwin) os_tag=macos ;;
+    Darwin) os_tag=darwin ;;
     Linux)  os_tag=linux ;;
-    *) err "unsupported OS: $os (macOS and Linux only; on Windows use: npm i -g @cryptocadet/cli)" ;;
+    *) err "unsupported OS: $os (Windows: use install.ps1 or npm i -g @cryptocadet/cli)" ;;
   esac
   case "$arch" in
     arm64|aarch64) arch_tag=arm64 ;;
     x86_64|amd64)  arch_tag=x64 ;;
     *) err "unsupported architecture: $arch" ;;
   esac
-  # Linux arm64 binary exists; macOS + Linux both ship arm64 and x64.
-  printf '%s-%s-%s' "$BIN_NAME" "$os_tag" "$arch_tag"
+  printf '%s-%s' "$os_tag" "$arch_tag"
 }
 
-# ── Downloader (curl or wget) ───────────────────────────────────────────────────────────────
-download() { # download <url> <dest>
-  if have curl; then curl -fsSL "$1" -o "$2"
-  elif have wget; then wget -qO "$2" "$1"
-  else err "need curl or wget to download"; fi
+system_node_ok() {
+  have node || return 1
+  v=$(node -p 'process.versions.node' 2>/dev/null) || return 1
+  maj=$(printf '%s' "$v" | cut -d. -f1); min=$(printf '%s' "$v" | cut -d. -f2)
+  [ "$maj" -gt "$MIN_NODE_MAJOR" ] && return 0
+  [ "$maj" -eq "$MIN_NODE_MAJOR" ] && [ "$min" -ge "$MIN_NODE_MINOR" ] && return 0
+  return 1
 }
 
-resolve_version() {
-  [ "$VERSION" != "latest" ] && { printf '%s' "$VERSION"; return; }
-  # Resolve the latest tag from GitHub's redirect without needing jq.
-  api="https://github.com/${RELEASES_REPO}/releases/latest"
-  if have curl; then
-    tag=$(curl -fsSLI -o /dev/null -w '%{url_effective}' "$api" | sed 's#.*/tag/##')
-  else
-    tag=$(wget -S --spider "$api" 2>&1 | sed -n 's#.*Location: .*/tag/##p' | tail -1 | tr -d '\r')
-  fi
-  [ -n "$tag" ] || err "could not resolve latest version; set CRYPTOCADET_VERSION"
-  printf '%s' "$tag"
-}
-
-# ── sha256 verification (never install unverified) ──────────────────────────────────────────
-sha256_of() { # sha256_of <file>  -> hex to stdout
-  if have sha256sum; then sha256sum "$1" | awk '{print $1}'
-  elif have shasum; then shasum -a 256 "$1" | awk '{print $1}'
-  else err "no sha256 tool (need sha256sum or shasum) — refusing to install unverified binary"; fi
+# Bootstrap a private, pinned Node into $INSTALL_DIR/node. Idempotent.
+bootstrap_node() {
+  if [ -x "$INSTALL_DIR/node/bin/node" ]; then info "using cached Node at $INSTALL_DIR/node"; return; fi
+  plat=$(node_platform)
+  base="https://nodejs.org/dist/${NODE_CHANNEL}"
+  tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
+  info "resolving latest Node (${NODE_CHANNEL}, ${plat}) ..."
+  download "${base}/SHASUMS256.txt" "${tmp}/SHASUMS256.txt"
+  line=$(grep "  node-v[0-9.]*-${plat}\.tar\.gz\$" "${tmp}/SHASUMS256.txt" | head -1)
+  [ -n "$line" ] || err "could not find a Node build for ${plat} in ${base}"
+  file=$(printf '%s' "$line" | awk '{print $2}')
+  want=$(printf '%s' "$line" | awk '{print $1}')
+  info "downloading ${file} ..."
+  download "${base}/${file}" "${tmp}/${file}"
+  got=$(sha256_of "${tmp}/${file}")
+  [ "$want" = "$got" ] || err "Node checksum mismatch (want $want got $got) — aborting"
+  info "extracting Node ..."
+  mkdir -p "${INSTALL_DIR}"
+  rm -rf "${INSTALL_DIR}/node" "${INSTALL_DIR}/node.tmp"
+  mkdir -p "${INSTALL_DIR}/node.tmp"
+  tar -xzf "${tmp}/${file}" -C "${INSTALL_DIR}/node.tmp" --strip-components=1
+  mv "${INSTALL_DIR}/node.tmp" "${INSTALL_DIR}/node"
 }
 
 main() {
-  asset=$(osArchToAsset)
-  archive="${asset}.tar.gz"
-  ver=$(resolve_version)
-  base="https://github.com/${RELEASES_REPO}/releases/download/${ver}"
+  mkdir -p "$INSTALL_DIR"
 
-  tmp=$(mktemp -d)
-  trap 'rm -rf "$tmp"' EXIT
-
-  info "CryptoCadet ${ver} — ${asset}"
-  info "downloading ${archive} ..."
-  download "${base}/${archive}" "${tmp}/${archive}"
-  download "${base}/SHA256SUMS" "${tmp}/SHA256SUMS"
-
-  info "verifying checksum ..."
-  want=$(grep " ${archive}\$" "${tmp}/SHA256SUMS" | awk '{print $1}')
-  [ -n "$want" ] || err "no checksum for ${archive} in SHA256SUMS — aborting"
-  got=$(sha256_of "${tmp}/${archive}")
-  [ "$want" = "$got" ] || err "checksum mismatch for ${archive} (want ${want}, got ${got}) — aborting"
-
-  tar -xzf "${tmp}/${archive}" -C "${tmp}"
-  [ -f "${tmp}/${BIN_NAME}" ] || err "archive did not contain ${BIN_NAME}"
-  chmod +x "${tmp}/${BIN_NAME}"
-
-  # Prefer /usr/local/bin; fall back to ~/.local/bin when it isn't writable and sudo is absent.
-  dest="/usr/local/bin"
-  if [ -w "$dest" ]; then
-    mv "${tmp}/${BIN_NAME}" "${dest}/${BIN_NAME}"
-  elif have sudo; then
-    info "installing to ${dest} (sudo) ..."
-    sudo mv "${tmp}/${BIN_NAME}" "${dest}/${BIN_NAME}"
+  if [ "$USE_SYSTEM_NODE" = "1" ] && system_node_ok; then
+    NODE_BIN=$(command -v node)
+    NPM_PATH_DIR=$(dirname "$NODE_BIN")
+    info "using system Node $(node -p process.versions.node)"
   else
-    dest="${HOME}/.local/bin"
-    mkdir -p "$dest"
-    mv "${tmp}/${BIN_NAME}" "${dest}/${BIN_NAME}"
-    case ":${PATH}:" in
-      *":${dest}:"*) ;;
-      *) info "note: ${dest} is not on your PATH — add it: export PATH=\"${dest}:\$PATH\"" ;;
-    esac
+    bootstrap_node
+    NODE_BIN="$INSTALL_DIR/node/bin/node"
+    NPM_PATH_DIR="$INSTALL_DIR/node/bin"
   fi
 
-  printf '\nCryptoCadet installed. Get started:\n  cryptocadet init\n'
+  info "installing ${NPM_SPEC} ..."
+  rm -rf "$INSTALL_DIR/app"; mkdir -p "$INSTALL_DIR/app"
+  # Use the chosen Node's npm; --omit=dev keeps it lean (published tarball ships prebuilt dist).
+  PATH="$NPM_PATH_DIR:$PATH" npm install --prefix "$INSTALL_DIR/app" --omit=dev --no-fund --no-audit "$NPM_SPEC" >&2 \
+    || err "npm install of ${NPM_SPEC} failed"
+
+  ENTRY="$INSTALL_DIR/app/node_modules/@cryptocadet/cli/dist/cli/bin.js"
+  [ -f "$ENTRY" ] || err "installed package is missing $ENTRY"
+
+  # Pick a PATH dir for the launchers.
+  if [ -z "$BIN_DIR" ]; then
+    if [ -w "/usr/local/bin" ]; then BIN_DIR="/usr/local/bin"; else BIN_DIR="$HOME/.local/bin"; fi
+  fi
+  mkdir -p "$BIN_DIR"
+  for name in cryptocadet ccx; do
+    launcher="$BIN_DIR/$name"
+    cat > "$launcher" <<EOF
+#!/bin/sh
+exec "$NODE_BIN" "$ENTRY" "\$@"
+EOF
+    chmod +x "$launcher"
+  done
+
+  case ":${PATH}:" in
+    *":${BIN_DIR}:"*) ;;
+    *) info "note: ${BIN_DIR} is not on your PATH — add it:  export PATH=\"${BIN_DIR}:\$PATH\"" ;;
+  esac
+
+  printf '\nCryptoCadet installed (%s).\n  node: %s\n  bin:  %s/cryptocadet\nGet started:\n  cryptocadet init\n' \
+    "$("$NODE_BIN" "$ENTRY" --version 2>/dev/null || echo installed)" "$("$NODE_BIN" -p process.versions.node)" "$BIN_DIR" >&2
 }
 
 main "$@"
