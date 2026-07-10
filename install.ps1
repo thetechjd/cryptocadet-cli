@@ -64,13 +64,24 @@ $Entry = Join-Path $AppDir 'node_modules\@cryptocadet\cli\dist\cli\bin.js'
 if (-not (Test-Path $Entry)) { Fail "installed package is missing $Entry" }
 
 # ── Launchers on PATH ─────────────────────────────────────────────────────────────────────────
+# Remove any stale `cryptocadet`/`ccx` elsewhere on PATH first — an old .exe from a previous
+# install would otherwise SHADOW our .cmd (PATHEXT resolves .exe before .cmd).
+foreach ($name in @('cryptocadet', 'ccx')) {
+  Get-Command $name -All -ErrorAction SilentlyContinue | ForEach-Object {
+    if ($_.Source -and (Split-Path $_.Source -Parent) -ne $BinDir -and (Test-Path $_.Source)) {
+      Info "removing shadowing $name at $($_.Source)"
+      Remove-Item $_.Source -Force -ErrorAction SilentlyContinue
+    }
+  }
+}
+
 New-Item -ItemType Directory -Force -Path $BinDir | Out-Null
 foreach ($name in @('cryptocadet', 'ccx')) {
   $cmd = Join-Path $BinDir "$name.cmd"
   "@echo off`r`n`"$NodeExe`" `"$Entry`" %*" | Set-Content -Path $cmd -Encoding ASCII
 }
 
-# Add BinDir to the user PATH if missing.
+# Add BinDir to the FRONT of the user PATH if missing (so it wins).
 $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
 if (($userPath -split ';') -notcontains $BinDir) {
   [Environment]::SetEnvironmentVariable('Path', "$BinDir;$userPath", 'User')

@@ -110,27 +110,47 @@ main() {
   ENTRY="$INSTALL_DIR/app/node_modules/@cryptocadet/cli/dist/cli/bin.js"
   [ -f "$ENTRY" ] || err "installed package is missing $ENTRY"
 
-  # Pick a PATH dir for the launchers.
+  # Where to put the launchers. If a `cryptocadet` is already on PATH (e.g. a stale binary
+  # from an older install), install OVER it — otherwise it keeps shadowing us on PATH and you
+  # get the old binary. Falling back to ~/.local/bin only when nothing pre-exists.
+  existing=$(command -v cryptocadet 2>/dev/null || true)
   if [ -z "$BIN_DIR" ]; then
-    if [ -w "/usr/local/bin" ]; then BIN_DIR="/usr/local/bin"; else BIN_DIR="$HOME/.local/bin"; fi
+    if [ -n "$existing" ]; then BIN_DIR=$(dirname "$existing")
+    elif [ -w "/usr/local/bin" ]; then BIN_DIR="/usr/local/bin"
+    else BIN_DIR="$HOME/.local/bin"; fi
   fi
-  mkdir -p "$BIN_DIR"
+
+  # Use sudo only if we can't write BIN_DIR ourselves.
+  SUDO=""
+  mkdir -p "$BIN_DIR" 2>/dev/null || { SUDO="sudo"; $SUDO mkdir -p "$BIN_DIR"; }
+  [ -w "$BIN_DIR" ] || SUDO="sudo"
+  if [ -n "$SUDO" ]; then
+    have sudo || err "need write access to $BIN_DIR — re-run with sudo, or set CRYPTOCADET_BIN_DIR to a writable dir"
+    info "installing launchers to $BIN_DIR (sudo) ..."
+  fi
+
   for name in cryptocadet ccx; do
-    launcher="$BIN_DIR/$name"
-    cat > "$launcher" <<EOF
-#!/bin/sh
-exec "$NODE_BIN" "$ENTRY" "\$@"
-EOF
-    chmod +x "$launcher"
+    tmp=$(mktemp)
+    printf '#!/bin/sh\nexec "%s" "%s" "$@"\n' "$NODE_BIN" "$ENTRY" > "$tmp"
+    chmod +x "$tmp"
+    $SUDO mv "$tmp" "$BIN_DIR/$name"
+    # Remove any OTHER copy that sits earlier on PATH and would shadow this one.
+    other=$(command -v "$name" 2>/dev/null || true)
+    if [ -n "$other" ] && [ "$other" != "$BIN_DIR/$name" ]; then
+      info "removing shadowing $name at $other"
+      if [ -w "$(dirname "$other")" ]; then rm -f "$other"
+      elif have sudo; then sudo rm -f "$other"; fi
+    fi
   done
+  hash -r 2>/dev/null || true
 
   case ":${PATH}:" in
     *":${BIN_DIR}:"*) ;;
     *) info "note: ${BIN_DIR} is not on your PATH — add it:  export PATH=\"${BIN_DIR}:\$PATH\"" ;;
   esac
 
-  printf '\nCryptoCadet installed (%s).\n  node: %s\n  bin:  %s/cryptocadet\nGet started:\n  cryptocadet init\n' \
-    "$("$NODE_BIN" "$ENTRY" --version 2>/dev/null || echo installed)" "$("$NODE_BIN" -p process.versions.node)" "$BIN_DIR" >&2
+  printf '\nCryptoCadet installed.\n  node: %s\n  bin:  %s/cryptocadet\nGet started:\n  cryptocadet init\n' \
+    "$("$NODE_BIN" -p process.versions.node)" "$BIN_DIR" >&2
 }
 
 main "$@"
