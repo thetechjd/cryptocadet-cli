@@ -73,7 +73,19 @@ async function compile() {
   for (const t of TARGETS) {
     const outPath = join(OUT_BIN_DIR, t.asset + (t.pkg.includes('win') ? '.exe' : ''));
     console.error(`      ${t.pkg} -> ${outPath}`);
-    await pkgExec([OUT_BUNDLE, '--targets', t.pkg, '--output', outPath, '--options', 'no-warnings']);
+    // --public + --public-packages "*" make pkg embed PLAIN JS instead of precompiled V8
+    // bytecode. Bytecode is produced by the build host's V8 and rejected by the target's V8
+    // when they differ ("[pkg] V8 rejected the bytecode cache ..."); this bites cross-target
+    // builds on Node 24 too, so the flags are mandatory, not target-specific. Only tradeoff is
+    // readable JS inside the binary — a non-issue (the source is on GitHub).
+    await pkgExec([
+      OUT_BUNDLE,
+      '--targets', t.pkg,
+      '--output', outPath,
+      '--public',
+      '--public-packages', '*',
+      '--options', 'no-warnings',
+    ]);
   }
 }
 
