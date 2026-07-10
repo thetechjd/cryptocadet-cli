@@ -26,8 +26,8 @@ class Cryptocadet < Formula
   def install
     # Installs the package + production deps (including the optional native keychain
     # @napi-rs/keyring, fetched prebuilt) into libexec, then links the bin. No build step —
-    # the published tarball already ships dist/.
-    system "npm", "install", *std_npm_install_args(libexec)
+    # the published tarball already ships dist/. std_npm_args installs into libexec.
+    system "npm", "install", *std_npm_args
     bin.install_symlink Dir["#{libexec}/bin/*"]
   end
 
