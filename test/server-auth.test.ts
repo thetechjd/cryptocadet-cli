@@ -13,11 +13,11 @@ const WALLET_REF = 'cryptocadet-agent-xyz';
 const SERVER_REF = 'cryptocadet-server-xyz';
 
 describe('server credential store', () => {
-  it('round-trips an API key and builds the right header', async () => {
+  it('round-trips an API key and sends it as a Bearer header (server has no ApiKey scheme)', async () => {
     await storeCredential(SERVER_REF, { kind: 'apikey', value: 'secret-123' });
     const cred = await readCredential(SERVER_REF);
     expect(cred).toEqual({ kind: 'apikey', value: 'secret-123' });
-    expect(authHeader(cred!)).toBe('ApiKey secret-123');
+    expect(authHeader(cred!)).toBe('Bearer secret-123');
   });
 
   it('round-trips a JWT and builds a Bearer header', async () => {

@@ -22,6 +22,10 @@ export interface Runtime {
   tools: Record<AgentToolName, AgentTool>;
   toolNames: readonly AgentToolName[];
   readBalance: (token: string) => Promise<string>;
+  /** The single gated signer. Exposed for the human-only `checkout` verb, which pays a
+   *  merchant-supplied signed quote through the SAME `pay()` path the agent tools use —
+   *  it adds NO new signing/broadcast call site (see test/single-gate.test.ts). */
+  signer: PaymentSigner;
   close: () => void;
 }
 
@@ -63,6 +67,7 @@ export async function buildRuntime(): Promise<Runtime> {
     tools,
     toolNames: AGENT_TOOL_NAMES,
     readBalance,
+    signer,
     close: () => ledger.close(),
   };
 }

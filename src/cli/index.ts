@@ -12,6 +12,8 @@ import { runInit, refuseMainWalletKey, type InitOptions } from '../init/wizard.j
 import { createReadlineIO, silentIO } from '../init/prompts.js';
 import { renderBanner } from '../brand/banner.js';
 import { editAllowlist, setRecipient, setLimit, setReserve } from './human-verbs.js';
+import { parseSignedQuote, resolveQuoteRaw } from './checkout.js';
+import { readFileSync } from 'node:fs';
 import { login, logout, makeServerClient } from './seller.js';
 import { rotate } from '../revoke/rotate.js';
 import { sweep } from '../revoke/sweep.js';
@@ -81,7 +83,7 @@ async function spendableTable() {
 
 const VERBS = [
   'init', 'wallet:show', 'policy:show', 'policy:set', 'allowlist:add', 'allowlist:remove',
-  'topup:request', 'rotate', 'sweep', 'reserve:check', 'subs:grant', 'subs:revoke',
+  'topup:request', 'checkout', 'rotate', 'sweep', 'reserve:check', 'subs:grant', 'subs:revoke',
   'login', 'logout', 'product:list', 'product:create', 'product:update', 'product:disable',
   'payout:set', 'subs:list', 'subs:create', 'subs:cancel', 'history', 'dashboard:sync',
   'collector:init', 'collector:serve',
@@ -235,6 +237,34 @@ async function main(): Promise<void> {
         }),
       );
       ledger.close();
+      break;
+    }
+    case 'checkout': {
+      // Pay a merchant-supplied SignedQuote (the quote is issued by the SELLER's server
+      // account, so the buyer cannot re-fetch it by id — it is passed in full). The signer
+      // re-verifies serverSig against the pinned pubkey and re-runs local policy before the
+      // single gated broadcast, so transport of the quote need not be trusted.
+      const quoteJson = flag(args, 'quote-json');
+      const quoteFile = flag(args, 'quote-file');
+      const raw = resolveQuoteRaw({
+        ...(quoteJson !== undefined ? { json: quoteJson } : {}),
+        ...(quoteFile !== undefined ? { file: quoteFile } : {}),
+        // Only read stdin when it is piped, so an interactive run doesn't hang on fd 0.
+        ...(process.stdin.isTTY ? {} : { stdin: () => readFileSync(0, 'utf8') }),
+      });
+      const quote = parseSignedQuote(raw);
+      // `--approve` (alias `--yes`) confirms an ESCALATE decision out-of-band; it can only
+      // rescue an above-threshold quote whose every other check already passed.
+      const humanApproved = has(args, 'approve') || has(args, 'yes');
+      // Allowlist the merchant's payout up front (fail-closed policy ships with none) so
+      // the payment isn't REFUSED for an un-trusted recipient. Opt-in via the flag.
+      if (has(args, 'allowlist-recipient')) setRecipient('add', quote.recipient);
+      const rt = await buildRuntime();
+      try {
+        out(await rt.signer.pay(quote, { humanApproved }));
+      } finally {
+        rt.close();
+      }
       break;
     }
 

@@ -12,7 +12,7 @@ const src = (p: string) => stripComments(readFileSync(join(here, '..', 'src', p)
 // The human-only verbs the CLI exposes. NONE may appear on the agent transport.
 const HUMAN_ONLY_VERBS = [
   'wallet:show', 'policy:show', 'policy:set', 'allowlist:add', 'allowlist:remove',
-  'topup:request', 'rotate', 'sweep', 'reserve:check',
+  'topup:request', 'checkout', 'rotate', 'sweep', 'reserve:check',
   'login', 'logout', 'product:list', 'product:create', 'product:update', 'product:disable',
   'payout:set', 'subs:list', 'subs:create', 'subs:cancel', 'history',
 ];

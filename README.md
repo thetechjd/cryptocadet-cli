@@ -79,7 +79,20 @@ proves the two surfaces are disjoint.
 **LOCAL state — human-only (keys + policy, never leave the machine):** `init`,
 `wallet:show`, `policy:show`, `policy:set` (caps/reserve/escalation), `allowlist:add`/
 `allowlist:remove` (tokens + recipients), `topup:request` (human-approved, no auto-drain),
-`rotate` (`--and-sweep --to`), `sweep --to <addr>`, `reserve:check`.
+`checkout` (pay a merchant-supplied signed quote — see below), `rotate` (`--and-sweep --to`),
+`sweep --to <addr>`, `reserve:check`.
+
+**`checkout --quote-json <json> | --quote-file <path> [--allowlist-recipient] [--approve|--yes]`**
+— the human one-shot pay verb, for merchant checkout flows (e.g. a host tool topping up a
+credit balance). The merchant issues a quote from *its own* server account, so the buyer
+cannot re-fetch it by id (`GET /v4/quotes/:id` is account-scoped); instead the merchant
+hands over the full `SignedQuote` and this verb pays it through the **same gated
+`PaymentSigner.pay()`** the agent transport uses — the serverSig is re-verified against the
+pinned pubkey and every field re-checked against local policy before the single broadcast,
+so the quote's transport need not be trusted. `--allowlist-recipient` adds the quote's
+payout to the recipient allowlist first (the fail-closed policy ships with none);
+`--approve` confirms an above-threshold (ESCALATE) quote out-of-band. Reads the quote from
+`--quote-json`, `--quote-file`, or piped stdin.
 
 **REMOTE state — server postgres via authenticated API (seller/buyer, no key risk):**
 `login`/`logout`, `product:list|create|update|disable`, `payout:set`,

@@ -38,7 +38,12 @@ export async function clearCredential(serverAuthRef: string): Promise<void> {
   await kc.delete(serverAuthRef, CRED_ACCOUNT);
 }
 
-/** The Authorization header value for a stored credential. */
+/** The Authorization header value for a stored credential.
+ *  Both an API key and a JWT are sent as `Bearer <value>` — the cryptocadet server's
+ *  client-auth extracts the token after `Bearer ` and (for an API key) hashes it against
+ *  accounts.api_key_hash. It does NOT accept an `ApiKey ` scheme, so the API key must ride
+ *  the Bearer prefix too, or every authenticated REMOTE call (payout:set, product:*,
+ *  subs:*, history, quote_payment) 401s. */
 export function authHeader(cred: StoredCredential): string {
-  return cred.kind === 'jwt' ? `Bearer ${cred.value}` : `ApiKey ${cred.value}`;
+  return `Bearer ${cred.value}`;
 }
