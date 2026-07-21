@@ -14,7 +14,7 @@ export type { PaymentRow, PaymentStatus } from './ledger/ledger.js';
 export { reconcilePending } from './signer/reconcile.js';
 export { reserveCheck } from './subscription/reserve.js';
 export { sweep, discoverTokens } from './revoke/sweep.js';
-export { rotate } from './revoke/rotate.js';
+export { rotateAgent } from './revoke/rotate.js';
 export { AGENT_TOOL_NAMES, buildAgentTools } from './mcp/agent-tools.js';
 export type { AgentToolName } from './mcp/agent-tools.js';
 export { buildRuntime } from './runtime.js';

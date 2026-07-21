@@ -55,20 +55,23 @@ export interface GeneratedAgentKey {
 // The same at-rest scheme backs BOTH the buyer agent wallet (agent.key.enc) and the
 // seller-side collector wallet (collector.key.enc): a distinct keychain data key per file.
 
-async function generateAndStoreKey(keychainRef: string, encPath: string): Promise<GeneratedAgentKey> {
+async function storeKey(keychainRef: string, encPath: string, privKeyHex: string): Promise<GeneratedAgentKey> {
   ensureRoot();
-  const wallet = Wallet.createRandom();
   const dataKey = newDataKey();
   try {
-    const enc = encrypt(wallet.privateKey, dataKey);
+    const enc = encrypt(privKeyHex, dataKey);
     const kc = await getKeychain();
     await kc.set(keychainRef, KEYCHAIN_ACCOUNT, dataKey.toString('base64'));
     writeFileSync(encPath, JSON.stringify(enc), { mode: 0o600 });
     chmodSync(encPath, 0o600);
-    return { address: wallet.address.toLowerCase(), keychainRef };
+    return { address: new Wallet(privKeyHex).address.toLowerCase(), keychainRef };
   } finally {
     dataKey.fill(0);
   }
+}
+
+async function generateAndStoreKey(keychainRef: string, encPath: string): Promise<GeneratedAgentKey> {
+  return storeKey(keychainRef, encPath, Wallet.createRandom().privateKey);
 }
 
 async function unlockPrivateKey(keychainRef: string, encPath: string, kc?: Keychain): Promise<string> {
@@ -90,6 +93,13 @@ async function unlockPrivateKey(keychainRef: string, encPath: string, kc?: Keych
 /** Generate a fresh agent keypair, encrypt at rest, stash the data key in the keychain. */
 export function generateAndStoreAgentKey(keychainRef: string): Promise<GeneratedAgentKey> {
   return generateAndStoreKey(keychainRef, paths.keyEnc());
+}
+
+/** Persist a SPECIFIC agent private key at rest (under a fresh data key). Used by rotate,
+ *  which generates the new key in memory and sweeps the old wallet to it BEFORE committing
+ *  here — so a failed sweep can't strand funds behind an already-destroyed old key. */
+export function storeAgentKey(keychainRef: string, privKeyHex: string): Promise<GeneratedAgentKey> {
+  return storeKey(keychainRef, paths.keyEnc(), privKeyHex);
 }
 
 /** Re-encrypt the agent key under a FRESH data key (rotate the data key, keep the wallet). */

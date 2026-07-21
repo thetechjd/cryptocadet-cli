@@ -15,7 +15,7 @@ import { editAllowlist, setRecipient, setLimit, setReserve } from './human-verbs
 import { parseSignedQuote, resolveQuoteRaw } from './checkout.js';
 import { readFileSync } from 'node:fs';
 import { login, logout, makeServerClient } from './seller.js';
-import { rotate } from '../revoke/rotate.js';
+import { rotateAgent } from '../revoke/rotate.js';
 import { sweep } from '../revoke/sweep.js';
 import { reserveCheck } from '../subscription/reserve.js';
 import { buildTopupRequest, type TopupTarget } from '../topup/topup.js';
@@ -87,11 +87,17 @@ const VERBS = [
   'login', 'logout', 'product:list', 'product:create', 'product:update', 'product:disable',
   'payout:set', 'subs:list', 'subs:create', 'subs:cancel', 'history', 'dashboard:sync',
   'collector:init', 'collector:serve',
-  'mcp:serve',
+  'mcp:serve', 'version',
 ];
 
 async function main(): Promise<void> {
   const [verb, ...args] = process.argv.slice(2);
+  // Version handshake — lets a driver (e.g. rdk) capability-gate against a minimum
+  // CLI version before invoking newer verbs like `checkout`. JSON on stdout, exit 0.
+  if (verb === 'version' || verb === '--version' || verb === '-v') {
+    out({ version: pkgVersion() });
+    return;
+  }
   switch (verb) {
     // ===================== LOCAL state — human-only =====================
     case 'init': {
@@ -182,13 +188,38 @@ async function main(): Promise<void> {
       break;
     }
     case 'rotate': {
-      if (has(args, 'and-sweep')) {
-        const cfg = loadConfig();
-        const provider = makeProvider(cfg);
-        const oldWallet = makeWallet(await unlockAgentPrivateKey(cfg.keychainRef), provider);
-        const swept = await sweep(provider, oldWallet, req(flag(args, 'to'), 'to'));
-        out({ swept, rotated: await rotate() });
-      } else out(await rotate());
+      const cfg = loadConfig();
+      const provider = makeProvider(cfg);
+      const json = has(args, 'json');
+      const yes = has(args, 'yes');
+      const toOverride = flag(args, 'to');
+      // Prompt only with a real terminal and no bypass flag. Scripts / --yes / --json
+      // proceed non-interactively (back-compat with `rotate --and-sweep [--to]`).
+      const interactive = Boolean(process.stdin.isTTY) && !json && !yes;
+
+      if (interactive) {
+        const io = createReadlineIO();
+        // Rotation destroys the old key irreversibly — warn and confirm before anything.
+        process.stderr.write(
+          '⚠  Rotating replaces your agent wallet and PERMANENTLY destroys the current key.\n' +
+          `   current agent: ${cfg.agentAddress}\n` +
+          '   Funds left in the old wallet become unrecoverable once the key is gone.\n' +
+          '   (This does NOT change your server API key.)\n',
+        );
+        if (!(await io.confirm('Rotate the agent key now?', false))) {
+          out({ rotated: false, cancelled: true });
+          break;
+        }
+        // Offer to rescue the old wallet's funds — default to the new agent wallet.
+        const destLabel = toOverride ?? 'the new agent wallet';
+        const doSweep = await io.confirm(`Transfer any funds from the old wallet to ${destLabel} first?`, true);
+        out(await rotateAgent({ provider, sweep: doSweep, sweepTo: toOverride }));
+        break;
+      }
+
+      // Non-interactive: sweep only when explicitly requested (--and-sweep or --to).
+      const doSweep = has(args, 'and-sweep') || Boolean(toOverride);
+      out(await rotateAgent({ provider, sweep: doSweep, sweepTo: toOverride }));
       break;
     }
     case 'sweep': {
