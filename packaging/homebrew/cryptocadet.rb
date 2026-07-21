@@ -11,14 +11,14 @@
 #   => brew install thetechjd/cryptocadet-cli/cryptocadet
 #
 # REQUIRES the package published to npm (url is the registry tarball). Until then, use the curl
-# installer or `npm i -g github:thetechjd/cryptocadet-cli`. On each release bump `version`, the
-# url's version segment, and `sha256` (the npm tarball shasum:
-#   npm view @cryptocadet/cli@<version> dist.shasum ).
+# installer or `npm i -g github:thetechjd/cryptocadet-cli`. On each release bump the url's
+# version segment and `sha256` — the SHA-256 of the tarball (NOT npm's `dist.shasum`, which is
+# SHA-1):  curl -fsSL https://registry.npmjs.org/@cryptocadet/cli/-/cli-<version>.tgz | shasum -a 256
 class Cryptocadet < Formula
   desc "USDC payment rails for agents on Base"
   homepage "https://cryptocadet.app"
-  url "https://registry.npmjs.org/@cryptocadet/cli/-/cli-0.1.3.tgz"
-  sha256 "5746b80710203a1c2aa345618efa543e9176f6d1fadb40ee17927c59fea7f299"
+  url "https://registry.npmjs.org/@cryptocadet/cli/-/cli-0.1.4.tgz"
+  sha256 "c7f3fbcc77470e7df9064c9ebcf175e7c926311f0c9083635abc76408d130a08"
   license :cannot_represent # package is UNLICENSED; update when a license is chosen
 
   depends_on "node"
