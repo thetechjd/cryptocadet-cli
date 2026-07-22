@@ -10,8 +10,11 @@ export function makeWallet(privateKeyHex: string, provider: JsonRpcProvider): Wa
   return new Wallet(privateKeyHex, provider);
 }
 
-/** Confirmation depth before a payment is treated as settled. Conservative defaults;
- *  Base has fast blocks. Overridable per deployment if the v3 harvest says otherwise. */
-export function confirmationDepth(chainId: number): number {
-  return chainId === 8453 ? 3 : 1; // mainnet vs testnet
+/** Confirmation depth before a payment is treated as settled. MUST be >= the v4 server's
+ *  verifier depth (CONFIRMATION_DEPTH, default 6 on mainnet) — if the client finalizes at a
+ *  shallower depth than the server accepts, the server 422s, records nothing, and the
+ *  balance is never credited. Overridable per deployment via config.confirmationDepth. */
+export function confirmationDepth(chainId: number, override?: number): number {
+  if (override && Number.isInteger(override) && override > 0) return override;
+  return chainId === 8453 ? 6 : 1; // mainnet matches server default; testnet is 1
 }

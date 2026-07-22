@@ -24,6 +24,11 @@ export interface PaymentRow {
   status: PaymentStatus;
   created_at: number;
   confirmed_at: number | null;
+  /** Set once the server's finalize endpoint has ACCEPTED the payment. Distinct from
+   *  confirmed_at (on-chain settlement): a payment can be on-chain CONFIRMED yet not yet
+   *  finalized if finalize failed (e.g. the chain hadn't reached the server's depth). NULL
+   *  here on a CONFIRMED row is what reconcile re-drives so crediting eventually happens. */
+  finalized_at: number | null;
 }
 
 const SCHEMA = `
@@ -35,7 +40,8 @@ CREATE TABLE IF NOT EXISTS payments (
   tx_hash      TEXT,
   status       TEXT NOT NULL,
   created_at   INTEGER NOT NULL,
-  confirmed_at INTEGER
+  confirmed_at INTEGER,
+  finalized_at INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_payments_token_time ON payments(token, confirmed_at);
 `;
@@ -51,7 +57,16 @@ export class Ledger {
     this.db = new SqliteDatabase(opts?.path ?? paths.ledger());
     this.db.exec('PRAGMA journal_mode = WAL;');
     this.db.exec(SCHEMA);
+    this.migrate();
     this.now = opts?.now ?? Date.now;
+  }
+
+  /** Additive, idempotent migrations for ledgers created by an older CLI. */
+  private migrate(): void {
+    const cols = this.db.prepare('PRAGMA table_info(payments)').all() as unknown as Array<{ name: string }>;
+    if (!cols.some((c) => c.name === 'finalized_at')) {
+      this.db.exec('ALTER TABLE payments ADD COLUMN finalized_at INTEGER');
+    }
   }
 
   close(): void {
@@ -92,6 +107,21 @@ export class Ledger {
 
   markFailed(quoteId: string): void {
     this.db.prepare('UPDATE payments SET status = ? WHERE quote_id = ?').run('FAILED', quoteId);
+  }
+
+  /** Record that the server's finalize endpoint ACCEPTED this payment. Only meaningful on a
+   *  CONFIRMED row; this is the flag reconcile checks to know crediting is done. */
+  markFinalized(quoteId: string): void {
+    this.db.prepare('UPDATE payments SET finalized_at = ? WHERE quote_id = ?').run(this.now(), quoteId);
+  }
+
+  /** CONFIRMED-on-chain rows the server has NOT yet accepted (finalized_at IS NULL). These
+   *  are re-driven on startup so a finalize that failed at a shallow confirmation depth is
+   *  retried once the chain is deep enough — without which the balance is never credited. */
+  awaitingFinalize(): PaymentRow[] {
+    return this.db
+      .prepare("SELECT * FROM payments WHERE status = 'CONFIRMED' AND finalized_at IS NULL")
+      .all() as unknown as PaymentRow[];
   }
 
   /** Sum of CONFIRMED amounts for a token in the trailing 24h, as a base-unit string. */

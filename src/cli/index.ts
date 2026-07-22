@@ -8,6 +8,7 @@
 // else; `mcp:serve` wires only those.
 
 import { fileURLToPath } from 'node:url';
+import { parseUnits, formatUnits } from 'ethers';
 import { runInit, refuseMainWalletKey, type InitOptions } from '../init/wizard.js';
 import { createReadlineIO, silentIO } from '../init/prompts.js';
 import { renderBanner } from '../brand/banner.js';
@@ -26,6 +27,8 @@ import { loadPolicy } from '../config/policy-store.js';
 import { unlockAgentPrivateKey } from '../custody/keystore.js';
 import { makeProvider, makeWallet } from '../chain/provider.js';
 import { tokenBalance, approveToken } from '../chain/erc20.js';
+import { ensureGas, liveSwapExecutor } from '../chain/swap.js';
+import { USDC_BY_CHAIN } from '../init/policy-scaffold.js';
 import { grantSubscriptionApproval, revokeSubscriptionApproval } from '../subscription/grant.js';
 import { Ledger } from '../ledger/ledger.js';
 import { buildRuntime } from '../runtime.js';
@@ -150,7 +153,23 @@ async function main(): Promise<void> {
       // caps, reserve, escalation threshold
       const kind = req(flag(args, 'kind'), 'kind'); // perTx | daily | requireHumanAbove | reserve
       const token = req(flag(args, 'token'), 'token');
-      const amount = req(flag(args, 'amount'), 'amount');
+      // Amount may be given as raw base units (--amount) or human token units (--usdc 50).
+      // The base-unit form is the classic foot-gun: `--amount 50` means 0.00005 USDC, not $50.
+      const usdcFlag = flag(args, 'usdc');
+      const decimals = loadPolicy().allowlist[token.toLowerCase()]?.decimals;
+      let amount: string;
+      if (usdcFlag !== undefined) {
+        if (decimals === undefined)
+          throw new Error(
+            `--usdc requires ${token} to be in the allowlist so its decimals are known; add it first (allowlist:add) or pass --amount in base units`,
+          );
+        amount = parseUnits(usdcFlag, decimals).toString(); // throws on a malformed decimal
+      } else {
+        amount = req(flag(args, 'amount'), 'amount');
+      }
+      // Echo the interpreted amount to stderr (stdout stays pure JSON for machine consumers).
+      const human = decimals !== undefined ? `${formatUnits(amount, decimals)} tokens` : `${amount} base units`;
+      console.error(`policy:set ${kind} ${token.toLowerCase()} = ${amount} base units (${human})`);
       if (kind === 'reserve') out(setReserve(token, amount));
       else out(setLimit(kind as 'perTx' | 'daily' | 'requireHumanAbove', token, amount));
       break;
@@ -236,7 +255,10 @@ async function main(): Promise<void> {
       const cfg = loadConfig();
       const provider = makeProvider(cfg);
       const wallet = makeWallet(await unlockAgentPrivateKey(cfg.keychainRef), provider);
+      // The approve tx needs native ETH for gas; top up from USDC first if the wallet is short.
+      const gasExec = liveSwapExecutor(wallet, provider, cfg.chainId, USDC_BY_CHAIN[cfg.chainId], cfg.agentAddress);
       const approve = async (token: string, spender: string, amount: string) => {
+        await ensureGas(loadPolicy(), gasExec);
         const tx = await approveToken(wallet, token, spender, amount);
         await tx.wait();
         return { txHash: tx.hash };

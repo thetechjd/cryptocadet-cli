@@ -11,7 +11,7 @@
 
 import { getAddress } from 'ethers';
 import { evaluate, type Decision, type PolicyContext } from '../policy/evaluate.js';
-import type { Policy } from '../types/policy.js';
+import { resolvePolicy, type PolicyRef } from '../types/policy.js';
 import type { SignedQuote, QuoteForPolicy } from '../types/quote.js';
 import { verifyQuote } from '../quote/verify.js';
 import type { Ledger, PaymentRow } from '../ledger/ledger.js';
@@ -28,12 +28,21 @@ export interface BroadcastResult {
 export type Broadcaster = (token: string, recipient: string, amount: string) => Promise<BroadcastResult>;
 
 export interface SignerDeps {
-  policy: Policy;
+  /** The policy, or a provider returning the current one. Pass a provider (see
+   *  makePolicyProvider) in a long-running server so cap edits take effect without restart. */
+  policy: PolicyRef;
   serverQuotePubKey: string;
   confirmations: number;
   ledger: Pick<
     Ledger,
-    'isQuoteSeen' | 'get' | 'markPending' | 'attachTxHash' | 'markConfirmed' | 'markFailed' | 'spentLast24h'
+    | 'isQuoteSeen'
+    | 'get'
+    | 'markPending'
+    | 'attachTxHash'
+    | 'markConfirmed'
+    | 'markFinalized'
+    | 'markFailed'
+    | 'spentLast24h'
   >;
   /** on-chain token balance read, base-unit string */
   readBalance: (token: string) => Promise<string>;
@@ -104,7 +113,7 @@ export class PaymentSigner {
     }
 
     const ctx: PolicyContext = {
-      policy: d.policy,
+      policy: resolvePolicy(d.policy), // resolve fresh so a live cap edit is honored
       walletBalance: () => balance,
       spentLast24h: (token) => d.ledger.spentLast24h(token),
       isQuoteSeen: (id) => d.ledger.isQuoteSeen(id),
@@ -171,9 +180,14 @@ export class PaymentSigner {
     d.ledger.markConfirmed(quoteId, bc.txHash);
     try {
       await d.finalize(quoteId, bc.txHash);
+      // Only NOW is crediting guaranteed: the server accepted the payment. Record it so
+      // reconcile does not re-drive an already-finalized row.
+      d.ledger.markFinalized(quoteId);
     } catch {
-      // Finalize is best-effort and idempotent; the on-chain payment already settled.
-      // Server-side reconciliation will pick it up.
+      // Finalize is idempotent but NOT guaranteed here: the server may reject a tx that is
+      // on-chain confirmed but not yet at the server's confirmation depth. Leave
+      // finalized_at NULL so startup reconciliation retries it once the chain is deep
+      // enough — that retry is what actually credits the balance.
     }
     return { status: 'CONFIRMED', quoteId, txHash: bc.txHash };
   }
@@ -205,7 +219,7 @@ export class PaymentSigner {
       chainId: quote.chainId,
     };
     const decision = evaluate(q, {
-      policy: d.policy,
+      policy: resolvePolicy(d.policy),
       walletBalance: () => balance,
       spentLast24h: (token) => d.ledger.spentLast24h(token),
       isQuoteSeen: (id) => d.ledger.isQuoteSeen(id),

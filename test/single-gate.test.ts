@@ -42,4 +42,16 @@ describe('single gated signer call site', () => {
   it('the agent tool surface never sets humanApproved (escalation is human-only)', () => {
     expect(src('mcp/agent-tools.ts')).not.toContain('humanApproved');
   });
+
+  it('the gas-swap is a self-custody op confined to chain/swap.ts, not a merchant-pay site', () => {
+    // The USDC->ETH gas top-up signs its own swap tx (a deliberate, policy-capped exception to
+    // no-native-spending). Keep that signing OUT of the merchant-payment path: the swap must
+    // not call the ERC-20 transfer primitive, and the signer must not import the swap module.
+    const swap = src('chain/swap.ts');
+    expect(count(swap, 'sendTransfer(')).toBe(0); // gas swap never signs a merchant transfer
+    expect(src('signer/signer.ts')).not.toContain('swap.js'); // the gate stays swap-agnostic
+    // The broadcaster invokes the top-up via an injected hook, not by importing swap directly,
+    // so there is still exactly one sendTransfer call site in the payment tail (asserted above).
+    expect(src('signer/live-broadcaster.ts')).not.toContain('swap.js');
+  });
 });

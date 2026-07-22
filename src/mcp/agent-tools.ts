@@ -12,7 +12,7 @@
 
 import type { PaymentSigner, PayResult } from '../signer/signer.js';
 import type { QuoteClient, QuoteRequest } from '../server/client.js';
-import type { Policy } from '../types/policy.js';
+import { resolvePolicy, type PolicyRef } from '../types/policy.js';
 
 /** The complete, closed set of agent-facing verb names. Frozen so it cannot be mutated
  *  at runtime to smuggle in a human-only verb. Tests assert this set exactly. */
@@ -20,7 +20,8 @@ export const AGENT_TOOL_NAMES = Object.freeze(['check_balance', 'quote_payment',
 export type AgentToolName = (typeof AGENT_TOOL_NAMES)[number];
 
 export interface AgentToolDeps {
-  policy: Policy;
+  /** Policy or a provider for it; a provider keeps a resident server's reads current. */
+  policy: PolicyRef;
   signer: PaymentSigner;
   /** Only the narrow money-path contract is reachable from the agent surface. */
   server: QuoteClient;
@@ -37,9 +38,9 @@ export interface AgentTool {
 const big = (s: string) => BigInt(s);
 
 export function buildAgentTools(deps: AgentToolDeps): Record<AgentToolName, AgentTool> {
+  const reserveFor = (token: string): string => resolvePolicy(deps.policy).subscriptionReserve[token] ?? '0';
   const spendableFor = (token: string, balance: string): string => {
-    const reserve = deps.policy.subscriptionReserve[token] ?? '0';
-    const s = big(balance) - big(reserve);
+    const s = big(balance) - big(reserveFor(token));
     return (s < 0n ? 0n : s).toString();
   };
 
@@ -51,7 +52,7 @@ export function buildAgentTools(deps: AgentToolDeps): Record<AgentToolName, Agen
         const token = String(args['token'] ?? '').toLowerCase();
         if (!token) throw new Error('check_balance requires a token address');
         const balance = await deps.readBalance(token);
-        return { token, balance, spendable: spendableFor(token, balance), reserve: deps.policy.subscriptionReserve[token] ?? '0' };
+        return { token, balance, spendable: spendableFor(token, balance), reserve: reserveFor(token) };
       },
     },
     quote_payment: {

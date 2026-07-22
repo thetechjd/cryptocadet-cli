@@ -36,6 +36,36 @@ describe('PaymentSigner — full flow', () => {
     expect(finalized()).toHaveLength(1);
   });
 
+  it('records finalized_at once the server finalize succeeds', async () => {
+    const { signer, ledger } = build();
+    const q = server.signQuote(makeQuote({ token: USDC, recipient: SELLER, amount: '1000000', quoteId: 'fin-1' }));
+    const r = await signer.pay(q);
+    expect(r.status).toBe('CONFIRMED');
+    const row = ledger.get('fin-1');
+    expect(row?.status).toBe('CONFIRMED');
+    expect(row?.finalized_at).not.toBeNull();
+    // A finalized row is not awaiting finalize.
+    expect(ledger.awaitingFinalize().map((r) => r.quote_id)).not.toContain('fin-1');
+  });
+
+  it('on-chain confirmed but finalize failure leaves finalized_at NULL for reconcile retry', async () => {
+    // Mirrors the Ticket #252 case: the tx settled but the server rejected finalize (too
+    // shallow). The row must stay CONFIRMED yet awaiting finalize so startup reconcile
+    // retries and the balance eventually gets credited.
+    const { signer, ledger } = build({
+      finalize: async () => {
+        throw new Error('VERIFY_FAILED: insufficient confirmations');
+      },
+    });
+    const q = server.signQuote(makeQuote({ token: USDC, recipient: SELLER, amount: '1000000', quoteId: 'fin-2' }));
+    const r = await signer.pay(q);
+    expect(r.status).toBe('CONFIRMED'); // the money DID land
+    const row = ledger.get('fin-2');
+    expect(row?.status).toBe('CONFIRMED');
+    expect(row?.finalized_at).toBeNull();
+    expect(ledger.awaitingFinalize().map((r) => r.quote_id)).toContain('fin-2');
+  });
+
   it('5. repeat pay(quoteId) -> no second signature; returns prior result', async () => {
     const { signer, rec } = build();
     const q = server.signQuote(makeQuote({ token: USDC, recipient: SELLER, amount: '1000000', quoteId: 'dup-1' }));

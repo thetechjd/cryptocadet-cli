@@ -36,6 +36,17 @@ describe('Ledger', () => {
     l.markPending({ quoteId: 'd', token: USDC, recipient: SELLER, amount: '1' });
     expect(() => l.markPending({ quoteId: 'd', token: USDC, recipient: SELLER, amount: '1' })).toThrow();
   });
+
+  it('markConfirmed leaves finalized_at NULL until markFinalized; awaitingFinalize reflects it', () => {
+    const l = new Ledger({ path: ':memory:' });
+    l.markPending({ quoteId: 'f', token: USDC, recipient: SELLER, amount: '1' });
+    l.markConfirmed('f', '0xabc');
+    expect(l.get('f')?.finalized_at).toBeNull();
+    expect(l.awaitingFinalize().map((r) => r.quote_id)).toEqual(['f']);
+    l.markFinalized('f');
+    expect(l.get('f')?.finalized_at).not.toBeNull();
+    expect(l.awaitingFinalize()).toHaveLength(0);
+  });
 });
 
 // 12. Crash mid-payment: PENDING row reconciled from chain, not re-paid.
@@ -86,5 +97,32 @@ describe('reconcilePending (case 12)', () => {
     const reports = await reconcilePending(l, fakeProvider({}), 3);
     expect(reports[0]?.outcome).toBe('no-txhash');
     expect(l.get('p4')?.status).toBe('FAILED');
+  });
+
+  // Ticket #252: a CONFIRMED-on-chain row whose finalize failed earlier must be re-driven
+  // to finalize so RetroDeck can finally observe it and credit the balance.
+  it('re-drives a CONFIRMED-but-not-finalized row and finalizes it', async () => {
+    const l = new Ledger({ path: ':memory:' });
+    l.markPending({ quoteId: 'p5', token: USDC, recipient: SELLER, amount: '1000000' });
+    l.markConfirmed('p5', '0xdeep'); // finalize never succeeded -> finalized_at NULL
+    const finalized: string[] = [];
+    const reports = await reconcilePending(l, fakeProvider({}), 3, async (q) => {
+      finalized.push(q);
+    });
+    expect(finalized).toEqual(['p5']);
+    expect(reports).toContainEqual({ quoteId: 'p5', outcome: 'finalized' });
+    expect(l.get('p5')?.finalized_at).not.toBeNull();
+  });
+
+  it('finalize still failing leaves the row awaiting finalize for a later run', async () => {
+    const l = new Ledger({ path: ':memory:' });
+    l.markPending({ quoteId: 'p6', token: USDC, recipient: SELLER, amount: '1000000' });
+    l.markConfirmed('p6', '0xstillshallow');
+    const reports = await reconcilePending(l, fakeProvider({}), 3, async () => {
+      throw new Error('VERIFY_FAILED');
+    });
+    expect(reports).toContainEqual({ quoteId: 'p6', outcome: 'finalize-retry-failed' });
+    expect(l.get('p6')?.finalized_at).toBeNull();
+    expect(l.awaitingFinalize().map((r) => r.quote_id)).toContain('p6');
   });
 });

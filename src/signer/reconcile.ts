@@ -8,11 +8,11 @@ import type { Ledger } from '../ledger/ledger.js';
 
 export interface ReconcileReport {
   quoteId: string;
-  outcome: 'confirmed' | 'failed' | 'still-pending' | 'no-txhash';
+  outcome: 'confirmed' | 'failed' | 'still-pending' | 'no-txhash' | 'finalized' | 'finalize-retry-failed';
 }
 
 export async function reconcilePending(
-  ledger: Pick<Ledger, 'pending' | 'markConfirmed' | 'markFailed'>,
+  ledger: Pick<Ledger, 'pending' | 'awaitingFinalize' | 'markConfirmed' | 'markFinalized' | 'markFailed'>,
   provider: JsonRpcProvider,
   confirmations: number,
   finalize?: (quoteId: string, txHash: string) => Promise<void>,
@@ -40,8 +40,9 @@ export async function reconcilePending(
       if (finalize) {
         try {
           await finalize(row.quote_id, row.tx_hash);
+          ledger.markFinalized(row.quote_id); // server accepted → crediting done
         } catch {
-          /* best-effort, idempotent server-side */
+          /* leave finalized_at NULL; the awaitingFinalize sweep below retries it */
         }
       }
       reports.push({ quoteId: row.quote_id, outcome: 'confirmed' });
@@ -52,5 +53,25 @@ export async function reconcilePending(
       reports.push({ quoteId: row.quote_id, outcome: 'still-pending' });
     }
   }
+
+  // Second pass: rows that are CONFIRMED on-chain but whose server finalize never
+  // succeeded (e.g. finalize was fired at a shallower depth than the server accepts, then
+  // its error was swallowed). Retry finalize now — the chain has had more time to deepen —
+  // so the payment is finally recorded server-side and the balance gets credited. Re-paying
+  // is impossible here: we only call finalize, never broadcast.
+  if (finalize) {
+    for (const row of ledger.awaitingFinalize()) {
+      if (!row.tx_hash) continue; // cannot finalize without a tx to point at
+      try {
+        await finalize(row.quote_id, row.tx_hash);
+        ledger.markFinalized(row.quote_id);
+        reports.push({ quoteId: row.quote_id, outcome: 'finalized' });
+      } catch {
+        // Still not accepted (likely still too shallow); leave NULL for the next run.
+        reports.push({ quoteId: row.quote_id, outcome: 'finalize-retry-failed' });
+      }
+    }
+  }
+
   return reports;
 }

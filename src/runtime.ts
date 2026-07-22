@@ -6,9 +6,11 @@
 // the wallet object for the session and is not written to disk.
 
 import { loadConfig } from './config/config.js';
-import { loadPolicy } from './config/policy-store.js';
+import { makePolicyProvider } from './config/policy-store.js';
 import { unlockAgentPrivateKey } from './custody/keystore.js';
 import { makeProvider, makeWallet, confirmationDepth } from './chain/provider.js';
+import { ensureGas, liveSwapExecutor } from './chain/swap.js';
+import { USDC_BY_CHAIN } from './init/policy-scaffold.js';
 import { Ledger } from './ledger/ledger.js';
 import { PaymentSigner } from './signer/signer.js';
 import { liveBroadcaster, liveReadBalance } from './signer/live-broadcaster.js';
@@ -31,7 +33,9 @@ export interface Runtime {
 
 export async function buildRuntime(): Promise<Runtime> {
   const config = loadConfig();
-  const policy = loadPolicy();
+  // A provider (not a snapshot) so a resident mcp:serve honors policy edits without a restart.
+  const policyProvider = makePolicyProvider();
+  const policy = policyProvider();
   if (policy.chainId !== config.chainId)
     throw new Error(`policy.chainId ${policy.chainId} != config.chainId ${config.chainId}`);
 
@@ -40,27 +44,32 @@ export async function buildRuntime(): Promise<Runtime> {
   const wallet = makeWallet(priv, provider);
 
   const ledger = new Ledger();
-  const confirmations = confirmationDepth(config.chainId);
+  const confirmations = confirmationDepth(config.chainId, config.confirmationDepth);
   const server = httpServerClient(config.serverBaseUrl, async () => {
     const cred = await readCredential(config.serverAuthRef);
     return cred ? authHeader(cred) : null;
   });
   const readBalance = liveReadBalance(provider, config.agentAddress);
 
+  // Just-in-time gas top-up: before an agent payment is signed, swap a bounded amount of
+  // USDC→ETH if the wallet can't cover gas (policy.gasSwap governs whether/how much).
+  const gasExec = liveSwapExecutor(wallet, provider, config.chainId, USDC_BY_CHAIN[config.chainId], config.agentAddress);
+  const ensureGasBeforeSend = () => ensureGas(policyProvider(), gasExec).then(() => undefined);
+
   const signer = new PaymentSigner({
-    policy,
+    policy: policyProvider,
     serverQuotePubKey: config.serverQuotePubKey,
     confirmations,
     ledger,
     readBalance,
-    broadcast: liveBroadcaster(wallet),
+    broadcast: liveBroadcaster(wallet, ensureGasBeforeSend),
     finalize: (quoteId, txHash) => server.finalize(quoteId, txHash).then(() => undefined),
   });
 
   // Reconcile any PENDING rows before serving — never re-pay, only resolve from chain.
   await reconcilePending(ledger, provider, confirmations, (q, t) => server.finalize(q, t).then(() => undefined));
 
-  const tools = buildAgentTools({ policy, signer, server, readBalance });
+  const tools = buildAgentTools({ policy: policyProvider, signer, server, readBalance });
 
   return {
     agentAddress: config.agentAddress,

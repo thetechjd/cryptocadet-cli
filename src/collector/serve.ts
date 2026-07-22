@@ -33,7 +33,7 @@ async function buildDeps(): Promise<{ deps: ExecutorDeps; client: PullClient }> 
 
   const provider = makeProvider(cfg);
   const wallet = makeWallet(await unlockCollectorPrivateKey(cfg.collectorKeychainRef), provider);
-  const confirmations = confirmationDepth(cfg.chainId);
+  const confirmations = confirmationDepth(cfg.chainId, cfg.confirmationDepth);
 
   const deps: ExecutorDeps = {
     collectorAddress: cfg.collectorAddress,

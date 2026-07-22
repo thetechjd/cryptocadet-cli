@@ -25,6 +25,10 @@ export interface Config {
   collectorKeychainRef?: string;
   /** Lowercased collector (spender) address buyers approve for subscription pulls. */
   collectorAddress?: string;
+  /** Confirmation depth before finalizing a payment. MUST be >= the v4 server's verifier
+   *  depth or finalize will 422 and the balance is never credited. Defaults to 6 (mainnet)
+   *  / 1 (testnet) when unset; pin it here to track a non-default server setting. */
+  confirmationDepth?: number;
 }
 
 export function ensureRoot(): void {
