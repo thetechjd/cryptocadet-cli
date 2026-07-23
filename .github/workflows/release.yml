@@ -8,8 +8,13 @@
 #   2) create the GitHub Release (notes only)
 #   3) (optional) update the tap formula's url version + sha256 (of the npm tarball)
 #
+# Publishing uses npm TRUSTED PUBLISHING (OIDC) — no npm token. One-time setup on
+# npmjs.com: package @cryptocadet/cli → Settings → Trusted Publisher → GitHub Actions →
+# repository thetechjd/cryptocadet-cli, workflow release.yml. (2FA-bypass automation
+# tokens lose direct-publish rights ~Jan 2027; OIDC is the successor path. NPM_TOKEN,
+# if still set, is used as a fallback during the transition.)
+#
 # Secrets (Settings → Secrets and variables → Actions):
-#   NPM_TOKEN         — npm automation token with publish rights to @cryptocadet  (required for step 1)
 #   TAP_GITHUB_TOKEN  — PAT with contents:write on thetechjd/homebrew-cryptocadet-cli (optional; step 3)
 name: release
 
@@ -21,6 +26,9 @@ on:
 jobs:
   npm-publish:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # npm trusted publishing (OIDC)
     outputs:
       version: ${{ steps.ver.outputs.version }}
     steps:
@@ -38,12 +46,15 @@ jobs:
         run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
       # `npm publish` runs prepare (build) + prepublishOnly (typecheck + tests). The published
       # tarball ships prebuilt dist/, so brew/curl/npm installs never build on the user's machine.
-      - name: Publish @cryptocadet/cli
+      # With the trusted publisher configured, OIDC authenticates the publish — tokenless.
+      - name: Publish @cryptocadet/cli (trusted publishing — OIDC)
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }} # transition fallback only
         run: |
-          if [ -z "$NODE_AUTH_TOKEN" ]; then
-            echo "NPM_TOKEN not set — skipping npm publish (publish by hand this release)."
+          npm install -g npm@latest   # OIDC trusted publishing needs npm >= 11.5.1
+          # Skip cleanly if this version is already on the registry (tag re-push).
+          if [ "$(npm view "@cryptocadet/cli@${GITHUB_REF_NAME#v}" version 2>/dev/null)" ]; then
+            echo "Version already published — skipping."
             exit 0
           fi
           npm publish
