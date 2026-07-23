@@ -1,6 +1,6 @@
 {
   "name": "@cryptocadet/cli",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "CryptoCadet v4 client package: agent hot-wallet signer + local policy engine (Base/USDC).",
   "license": "UNLICENSED",
   "type": "module",

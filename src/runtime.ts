@@ -62,7 +62,10 @@ export async function buildRuntime(): Promise<Runtime> {
     confirmations,
     ledger,
     readBalance,
-    broadcast: liveBroadcaster(wallet, ensureGasBeforeSend),
+    // Gas ensure is a PRE-FLIGHT (runs before the quote is claimed), not a broadcast
+    // hook: a failed swap used to burn the quote as FAILED although nothing was signed.
+    prepare: ensureGasBeforeSend,
+    broadcast: liveBroadcaster(wallet),
     finalize: (quoteId, txHash) => server.finalize(quoteId, txHash).then(() => undefined),
   });
 

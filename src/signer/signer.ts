@@ -46,6 +46,11 @@ export interface SignerDeps {
   >;
   /** on-chain token balance read, base-unit string */
   readBalance: (token: string) => Promise<string>;
+  /** Pre-flight that must succeed before the quote is CLAIMED (e.g. the USDC→ETH gas
+   *  top-up). Runs after the policy gate but BEFORE markPending: a failure here means
+   *  nothing was signed and the quote stays unclaimed and payable — previously a gas
+   *  failure inside broadcast() burned the quote as FAILED though no tx ever existed. */
+  prepare?: () => Promise<void>;
   broadcast: Broadcaster;
   /** server finalize call, idempotent on quoteId. Best-effort; failure does not undo a confirmed tx. */
   finalize: (quoteId: string, txHash: string) => Promise<void>;
@@ -133,6 +138,18 @@ export class PaymentSigner {
         return { status: 'ESCALATE', quoteId, reason: decision.reason };
       }
       return { status: 'REFUSED', quoteId, reason: (decision as { reason: string }).reason };
+    }
+
+    // Pre-flight (gas top-up etc.) BEFORE the quote is claimed in the ledger. A failure
+    // here has signed nothing: return FAILED with the reason but leave the quote
+    // unclaimed, so the same quote can be retried once the underlying issue (e.g. the
+    // USDC→ETH swap, ETH bootstrap) is resolved — instead of being burned forever.
+    if (d.prepare) {
+      try {
+        await d.prepare();
+      } catch (e) {
+        return { status: 'FAILED', quoteId, reason: `pre-flight failed (nothing signed; quote still payable): ${(e as Error).message}` };
+      }
     }
 
     // Record PENDING in the ledger BEFORE broadcast, so a crash mid-payment is
