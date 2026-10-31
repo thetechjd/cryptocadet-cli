@@ -29,6 +29,9 @@ export {
   selectRequirement,
   requirementChainId,
   buildPaymentProof,
+  selectCredits,
+  isTrustedOrigin,
+  CREDITS_SCHEME,
 } from './x402/x402.js';
 export type { PaymentRequirement, Challenge402, X402Deps, X402Result, PaySettlement } from './x402/x402.js';
 export { grantSubscriptionApproval, revokeSubscriptionApproval, validateGrant } from './subscription/grant.js';
@@ -37,6 +40,10 @@ export { executePull, runCollectorOnce } from './collector/executor.js';
 export type { PullInstruction, ExecutorDeps, ExecOutcome, PullClient, TickSummary } from './collector/executor.js';
 export { collectorClient } from './collector/internal-client.js';
 export { collectorInit, collectorServeOnce, collectorServeLoop } from './collector/serve.js';
+export { executePayout, runTreasuryOnce } from './treasury/executor.js';
+export type { PayoutInstruction, PayoutOutcome, TreasuryDeps, TreasuryClient, TreasuryTick } from './treasury/executor.js';
+export { treasuryClient } from './treasury/internal-client.js';
+export { treasuryInit, treasuryServeOnce, treasuryServeLoop } from './treasury/serve.js';
 export { renderBanner, colorSupported, BRAND } from './brand/banner.js';
 export { runInit, refuseMainWalletKey } from './init/wizard.js';
 export type { InitOptions, InitSummary, WizardIO, Role, Network } from './init/wizard.js';

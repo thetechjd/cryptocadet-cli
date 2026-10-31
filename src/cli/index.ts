@@ -22,6 +22,7 @@ import { reserveCheck } from '../subscription/reserve.js';
 import { buildTopupRequest, type TopupTarget } from '../topup/topup.js';
 import { dashboardSync } from '../dashboard/sync.js';
 import { collectorInit, collectorServeOnce, collectorServeLoop } from '../collector/serve.js';
+import { treasuryInit, treasuryServeLoop, treasuryServeOnce } from '../treasury/serve.js';
 import { loadConfig } from '../config/config.js';
 import { loadPolicy } from '../config/policy-store.js';
 import { unlockAgentPrivateKey } from '../custody/keystore.js';
@@ -89,7 +90,7 @@ const VERBS = [
   'topup:request', 'checkout', 'rotate', 'sweep', 'reserve:check', 'subs:grant', 'subs:revoke',
   'login', 'logout', 'product:list', 'product:create', 'product:update', 'product:disable',
   'payout:set', 'subs:list', 'subs:create', 'subs:cancel', 'history', 'dashboard:sync',
-  'collector:init', 'collector:serve',
+  'collector:init', 'collector:serve', 'treasury:init', 'treasury:serve',
   'mcp:serve', 'version',
 ];
 
@@ -390,6 +391,33 @@ async function main(): Promise<void> {
         console.error(`[collector] claimed=${s.claimed} executed=${s.executed} failed=${s.failed}`),
       );
       console.error(`cryptocadet collector serving every ${intervalMs}ms`);
+      process.on('SIGINT', () => {
+        stop();
+        process.exit(0);
+      });
+      process.on('SIGTERM', () => {
+        stop();
+        process.exit(0);
+      });
+      break;
+    }
+
+    // ===================== Treasury (CryptoCadet operator only) =====================
+    case 'treasury:init':
+      // Generate the operator treasury wallet that pays sellers their USDC earnings.
+      out(await treasuryInit());
+      break;
+    case 'treasury:serve': {
+      // Keyed payout loop: claim PENDING payouts, send USDC, report tx hashes.
+      if (has(args, 'once')) {
+        out(await treasuryServeOnce());
+        break;
+      }
+      const intervalMs = Number(flag(args, 'interval') ?? '60000');
+      const stop = await treasuryServeLoop(intervalMs, (t) =>
+        console.error(`[treasury] claimed=${t.claimed} sent=${t.sent} failed=${t.failed}`),
+      );
+      console.error(`cryptocadet treasury serving every ${intervalMs}ms`);
       process.on('SIGINT', () => {
         stop();
         process.exit(0);

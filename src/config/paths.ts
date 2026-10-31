@@ -20,6 +20,7 @@ export const paths = {
   root: rootDir,
   keyEnc: () => join(rootDir(), 'agent.key.enc'),
   collectorKeyEnc: () => join(rootDir(), 'collector.key.enc'),
+  treasuryKeyEnc: () => join(rootDir(), 'treasury.key.enc'),
   policy: () => join(rootDir(), 'policy.json'),
   ledger: () => join(rootDir(), 'ledger.sqlite'),
   config: () => join(rootDir(), 'config.json'),

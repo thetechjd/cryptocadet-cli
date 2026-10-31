@@ -15,6 +15,7 @@ const HUMAN_ONLY_VERBS = [
   'topup:request', 'checkout', 'rotate', 'sweep', 'reserve:check',
   'login', 'logout', 'product:list', 'product:create', 'product:update', 'product:disable',
   'payout:set', 'subs:list', 'subs:create', 'subs:cancel', 'history',
+  'collector:init', 'collector:serve', 'treasury:init', 'treasury:serve',
 ];
 
 describe('two-surface separation (instruction 02 acceptance)', () => {

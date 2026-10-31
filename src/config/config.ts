@@ -25,6 +25,11 @@ export interface Config {
   collectorKeychainRef?: string;
   /** Lowercased collector (spender) address buyers approve for subscription pulls. */
   collectorAddress?: string;
+  /** OS-keychain service id for the CryptoCadet OPERATOR treasury wallet (`treasury:init`)
+   *  that pays sellers their USDC earnings. Only CryptoCadet ops runs this. */
+  treasuryKeychainRef?: string;
+  /** Lowercased treasury address (fund it with USDC + a little ETH for gas). */
+  treasuryAddress?: string;
   /** Confirmation depth before finalizing a payment. MUST be >= the v4 server's verifier
    *  depth or finalize will 422 and the balance is never credited. Defaults to 6 (mainnet)
    *  / 1 (testnet) when unset; pin it here to track a non-default server setting. */

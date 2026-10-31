@@ -54,4 +54,16 @@ describe('single gated signer call site', () => {
     // so there is still exactly one sendTransfer call site in the payment tail (asserted above).
     expect(src('signer/live-broadcaster.ts')).not.toContain('swap.js');
   });
+
+  it('the operator treasury signs with its own primitive and is unreachable from the agent path', () => {
+    const serve = src('treasury/serve.ts');
+    const executor = src('treasury/executor.ts');
+    expect(count(serve, 'sendPayoutTransfer(')).toBe(1); // exactly one treasury signing site
+    expect(serve).not.toContain('sendTransfer(');         // never the agent payment primitive
+    expect(executor).not.toContain('sendPayoutTransfer('); // the executor stays key-free
+    for (const f of ['mcp/agent-tools.ts', 'signer/signer.ts', 'signer/live-broadcaster.ts', 'runtime.ts']) {
+      expect(src(f)).not.toContain('treasury');
+    }
+    expect(count(src('chain/erc20.ts'), 'sendPayoutTransfer(')).toBe(1); // defined once, called only from treasury
+  });
 });

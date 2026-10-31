@@ -85,3 +85,16 @@ export async function sendTransferFrom(
   const c = new Contract(token, ERC20_ABI, wallet);
   return (await c.transferFrom!(from, to, BigInt(amount))) as TransactionResponse;
 }
+
+/** Treasury payout: ERC-20 transfer from the OPERATOR treasury wallet to a seller.
+ *  Deliberately a separate primitive from `sendTransfer` (the agent payment tail), so the
+ *  single-gate invariant — one agent-path call site — stays literally checkable. */
+export async function sendPayoutTransfer(
+  wallet: Wallet,
+  token: string,
+  to: string,
+  amount: string,
+): Promise<TransactionResponse> {
+  const c = new Contract(token, ERC20_ABI, wallet);
+  return (await c.transfer!(to, BigInt(amount))) as TransactionResponse;
+}

@@ -5,6 +5,17 @@
 //
 // Signing still happens ONLY behind the policy-gated signer; this module never touches a
 // key. It is the transport glue an agent host uses around `quote_payment` + `pay`.
+//
+// Two settlement rails, in order of preference:
+//   credits — the CryptoCadet 402 gateway also accepts an agent token (`ccx_agent_…`) that
+//             spends the owner's card-funded credits. No chain, no signing. The token is
+//             only ever sent to a TRUSTED gateway origin (deps.creditsOrigins), never to an
+//             arbitrary server that merely claims to accept credits.
+//   usdc    — pay a server-signed quote on-chain through the gated signer. Gateway items
+//             publish a `quoteUrl` that issues a quote bound to the item; other x402
+//             servers fall back to `quoteFor` (the account's own quote endpoint).
+
+import type { SignedQuote } from '../types/quote.js';
 
 export interface PaymentRequirement {
   /** payment scheme, e.g. 'exact' or 'cryptocadet-v4' */
@@ -20,7 +31,14 @@ export interface PaymentRequirement {
   payTo: string;
   /** the protected resource (echoed for binding) */
   resource?: string;
+  /** CryptoCadet gateway: where to obtain a quote bound to this item, and the body to POST */
+  quoteUrl?: string;
+  quoteBody?: unknown;
+  /** CryptoCadet gateway credits rail: header the agent token goes in */
+  header?: string;
 }
+
+export const CREDITS_SCHEME = 'cryptocadet-credits';
 
 export interface Challenge402 {
   x402Version?: number;
@@ -57,9 +75,31 @@ export async function parseChallenge(res: Response): Promise<Challenge402> {
   };
 }
 
-/** Pick the first requirement payable on our chain. */
+/** Pick the first on-chain requirement payable on our chain (credits entries have no chain). */
 export function selectRequirement(challenge: Challenge402, chainId: number): PaymentRequirement | null {
-  return challenge.accepts.find((r) => requirementChainId(r) === chainId) ?? null;
+  return challenge.accepts.find((r) => r.scheme !== CREDITS_SCHEME && requirementChainId(r) === chainId) ?? null;
+}
+
+/** The credits-rail requirement, if the resource offers one. */
+export function selectCredits(challenge: Challenge402): PaymentRequirement | null {
+  return challenge.accepts.find((r) => r.scheme === CREDITS_SCHEME) ?? null;
+}
+
+/** True when `url` is on one of the trusted gateway origins (exact origin match). */
+export function isTrustedOrigin(url: string, origins: readonly string[]): boolean {
+  let o: string;
+  try {
+    o = new URL(url).origin;
+  } catch {
+    return false;
+  }
+  return origins.some((t) => {
+    try {
+      return new URL(t).origin === o;
+    } catch {
+      return false;
+    }
+  });
 }
 
 /** The X-PAYMENT proof header value the client sends on retry (base64 JSON). */
@@ -81,6 +121,12 @@ export interface X402Deps {
   quoteFor: (req: PaymentRequirement) => Promise<{ quoteId: string }>;
   /** execute a quote via the local policy-gated signer */
   pay: (quoteId: string) => Promise<PaySettlement>;
+  /** pay a full gateway-issued SignedQuote via the same gated signer (enables `quoteUrl`) */
+  paySignedQuote?: (quote: SignedQuote) => Promise<PaySettlement>;
+  /** agent spend token (`ccx_agent_…`) for the credits rail */
+  agentToken?: string;
+  /** origins the agent token may be sent to (e.g. https://api.v4.cryptocadet.app) */
+  creditsOrigins?: readonly string[];
   /** injectable fetch (defaults to global) */
   fetchImpl?: typeof fetch;
 }
@@ -88,8 +134,35 @@ export interface X402Deps {
 export interface X402Result {
   response: Response;
   paid: boolean;
+  rail?: 'credits' | 'usdc';
   quoteId?: string;
   txHash?: string;
+}
+
+function withHeader(init: RequestInit, name: string, value: string): RequestInit {
+  return { ...init, headers: { ...((init.headers as Record<string, string>) ?? {}), [name]: value } };
+}
+
+async function refusal(res: Response): Promise<string> {
+  try {
+    const b = (await res.clone().json()) as { code?: string; message?: string };
+    return [b.code, b.message].filter(Boolean).join(': ') || `HTTP ${res.status}`;
+  } catch {
+    return `HTTP ${res.status}`;
+  }
+}
+
+/** Obtain a quote bound to a gateway item from its `quoteUrl`. */
+async function gatewayQuote(req: PaymentRequirement, doFetch: typeof fetch): Promise<SignedQuote> {
+  const r = await doFetch(req.quoteUrl!, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(req.quoteBody ?? {}),
+  });
+  if (!r.ok) throw new Error(`x402: gateway quote failed (${await refusal(r)})`);
+  const body = (await r.json()) as { quote?: SignedQuote };
+  if (!body.quote?.quoteId) throw new Error('x402: gateway quote response had no quote');
+  return body.quote;
 }
 
 /**
@@ -108,20 +181,38 @@ export async function fetchWithPayment(
   if (first.status !== 402) return { response: first, paid: false };
 
   const challenge = await parseChallenge(first);
-  const req = selectRequirement(challenge, deps.chainId);
-  if (!req) throw new Error(`x402: no requirement payable on chain ${deps.chainId}`);
+  let creditsRefusal: string | null = null;
 
-  const { quoteId } = await deps.quoteFor(req);
-  const settlement = await deps.pay(quoteId);
+  // Credits first: no chain round-trip. Only to a trusted gateway origin.
+  const credits = selectCredits(challenge);
+  if (credits && deps.agentToken && isTrustedOrigin(url, deps.creditsOrigins ?? [])) {
+    const header = credits.header ?? 'X-CryptoCadet-Agent';
+    const response = await doFetch(url, withHeader(init, header, deps.agentToken));
+    if (response.status !== 402) return { response, paid: response.ok, rail: 'credits' };
+    creditsRefusal = await refusal(response); // e.g. INSUFFICIENT_CREDITS — try USDC if offered
+  }
+
+  const req = selectRequirement(challenge, deps.chainId);
+  if (!req) {
+    if (creditsRefusal) throw new Error(`x402: credits refused (${creditsRefusal}) and no USDC option on chain ${deps.chainId}`);
+    throw new Error(`x402: no requirement payable on chain ${deps.chainId}`);
+  }
+
+  let quoteId: string;
+  let settlement: PaySettlement;
+  if (req.quoteUrl && deps.paySignedQuote) {
+    const quote = await gatewayQuote(req, doFetch);
+    quoteId = quote.quoteId;
+    settlement = await deps.paySignedQuote(quote);
+  } else {
+    ({ quoteId } = await deps.quoteFor(req));
+    settlement = await deps.pay(quoteId);
+  }
   if (settlement.status !== 'CONFIRMED' || !settlement.txHash) {
     // Do NOT retry on a refusal/escalation/failure — the policy engine or chain rejected it.
     throw new Error(`x402: payment not settled (${settlement.reason ?? settlement.status})`);
   }
 
-  const headers: Record<string, string> = {
-    ...((init.headers as Record<string, string>) ?? {}),
-    'X-PAYMENT': buildPaymentProof(quoteId, settlement.txHash),
-  };
-  const response = await doFetch(url, { ...init, headers });
-  return { response, paid: true, quoteId, txHash: settlement.txHash };
+  const response = await doFetch(url, withHeader(init, 'X-PAYMENT', buildPaymentProof(quoteId, settlement.txHash)));
+  return { response, paid: true, rail: 'usdc', quoteId, txHash: settlement.txHash };
 }

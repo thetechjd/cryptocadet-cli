@@ -140,3 +140,15 @@ export function generateAndStoreCollectorKey(keychainRef: string): Promise<Gener
 export function unlockCollectorPrivateKey(keychainRef: string, kc?: Keychain): Promise<string> {
   return unlockPrivateKey(keychainRef, paths.collectorKeyEnc(), kc);
 }
+
+// ── Treasury (operator payout) wallet — separate key + enc file ───────────────
+
+/** Generate the treasury keypair that sends sellers their USDC earnings. */
+export function generateAndStoreTreasuryKey(keychainRef: string): Promise<GeneratedAgentKey> {
+  return generateAndStoreKey(keychainRef, paths.treasuryKeyEnc());
+}
+
+/** Unlock the treasury private key for signing payout transfers. */
+export function unlockTreasuryPrivateKey(keychainRef: string, kc?: Keychain): Promise<string> {
+  return unlockPrivateKey(keychainRef, paths.treasuryKeyEnc(), kc);
+}
