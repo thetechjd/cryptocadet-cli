@@ -71,14 +71,34 @@ async function spendableTable() {
   const cfg = loadConfig();
   const policy = loadPolicy();
   const provider = makeProvider(cfg);
-  const tokens: Array<{ token: string; symbol: string; balance: string; reserve: string; spendable: string }> = [];
+  // Additive output only: rdk parses agentAddress/chainId/tokens[].balance (base units).
+  const tokens: Array<{ token: string; symbol: string; balance: string; reserve: string; spendable: string; amount: string }> = [];
   for (const token of Object.keys(policy.allowlist)) {
     const balance = await tokenBalance(provider, token, cfg.agentAddress);
     const reserve = policy.subscriptionReserve[token] ?? '0';
     const spendable = (BigInt(balance) - BigInt(reserve) < 0n ? 0n : BigInt(balance) - BigInt(reserve)).toString();
-    tokens.push({ token, symbol: policy.allowlist[token]!.symbol, balance, reserve, spendable });
+    const meta = policy.allowlist[token]!;
+    tokens.push({ token, symbol: meta.symbol, balance, reserve, spendable, amount: `${formatUnits(balance, meta.decimals)} ${meta.symbol}` });
   }
-  return { agentAddress: cfg.agentAddress, chainId: cfg.chainId, tokens };
+  // Native ETH pays gas for every payment (USDC can't), so show it alongside the tokens.
+  const wei = await provider.getBalance(cfg.agentAddress);
+  const swap = policy.gasSwap;
+  const lowGas = wei < BigInt(swap?.minWei || '100000000000000');
+  return {
+    agentAddress: cfg.agentAddress,
+    chainId: cfg.chainId,
+    network: cfg.chainId === 8453 ? 'Base mainnet' : 'Base Sepolia (testnet)',
+    eth: { balance: wei.toString(), amount: `${formatUnits(wei, 18)} ETH` },
+    tokens,
+    ...(lowGas
+      ? {
+          gas:
+            swap?.enabled
+              ? 'ETH is low: a small amount of USDC will be swapped for gas before the next payment (needs a little ETH to start if the balance is 0).'
+              : 'ETH is low: send a little ETH on Base to this address so payments can pay gas.',
+        }
+      : {}),
+  };
 }
 
 const VERBS = [
