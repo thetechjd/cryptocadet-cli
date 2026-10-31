@@ -71,15 +71,13 @@ async function spendableTable() {
   const cfg = loadConfig();
   const policy = loadPolicy();
   const provider = makeProvider(cfg);
-  // Additive output only: rdk parses agentAddress/chainId/tokens[].balance (base units).
-  const tokens: Array<{ token: string; symbol: string; balance: string; reserve: string; spendable: string; amount: string }> = [];
-  for (const token of Object.keys(policy.allowlist)) {
-    const balance = await tokenBalance(provider, token, cfg.agentAddress);
-    const reserve = policy.subscriptionReserve[token] ?? '0';
-    const spendable = (BigInt(balance) - BigInt(reserve) < 0n ? 0n : BigInt(balance) - BigInt(reserve)).toString();
-    const meta = policy.allowlist[token]!;
-    tokens.push({ token, symbol: meta.symbol, balance, reserve, spendable, amount: `${formatUnits(balance, meta.decimals)} ${meta.symbol}` });
-  }
+  // v4 pays in USDC on Base only, so show exactly that token (plus ETH for gas below), not
+  // every token a policy may list. rdk parses agentAddress/chainId/tokens[].balance.
+  const token = USDC_BY_CHAIN[cfg.chainId];
+  const balance = await tokenBalance(provider, token, cfg.agentAddress);
+  const reserve = policy.subscriptionReserve[token] ?? '0';
+  const spendable = (BigInt(balance) - BigInt(reserve) < 0n ? 0n : BigInt(balance) - BigInt(reserve)).toString();
+  const tokens = [{ token, symbol: 'USDC', balance, reserve, spendable, amount: `${formatUnits(balance, 6)} USDC` }];
   // Native ETH pays gas for every payment (USDC can't), so show it alongside the tokens.
   const wei = await provider.getBalance(cfg.agentAddress);
   const swap = policy.gasSwap;
