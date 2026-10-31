@@ -14,10 +14,12 @@ export interface PaidFetchDeps {
   chainId: number;
   signer: Pick<PaymentSigner, 'pay'>;
   server: QuoteClient;
-  /** read lazily so a token created after mcp:serve started is picked up */
+  /** read lazily so a token created after the runtime started is picked up */
   agentToken: () => Promise<string | null>;
   creditsOrigins: readonly string[];
   fetchImpl?: typeof fetch;
+  /** Confirm a payment above the policy's requireHumanAbove threshold (human `fetch --approve`). */
+  humanApproved?: boolean;
 }
 
 export interface PaidFetchArgs {
@@ -44,6 +46,15 @@ const MAX_BODY = 64 * 1024;
 // Never let the caller smuggle payment credentials into the request themselves.
 const RESERVED_HEADERS = new Set(['x-cryptocadet-agent', 'x-payment', 'authorization']);
 
+/** Turn a policy refusal into the command that resolves it. */
+function withHint(reason: string): string {
+  const m = reason.match(/^recipient not allowlisted (0x[0-9a-fA-F]{40})/);
+  if (m) return `${reason}. To trust this seller: cryptocadet allowlist:add --kind recipient --address ${m[1]}`;
+  if (reason === 'exceeds per-tx cap') return `${reason}. Raise it: cryptocadet policy:set --kind perTx --token <usdc> --usdc <amount>`;
+  if (reason === 'exceeds daily cap') return `${reason}. Raise it: cryptocadet policy:set --kind daily --token <usdc> --usdc <amount>`;
+  return reason;
+}
+
 function settlement(r: PayResult): PaySettlement {
   if (r.status === 'CONFIRMED') return { status: r.status, txHash: r.txHash };
   if (r.status === 'PENDING') return { status: r.status, txHash: r.txHash, reason: 'broadcast but not yet confirmed' };
@@ -52,7 +63,8 @@ function settlement(r: PayResult): PaySettlement {
       ? { status: 'CONFIRMED', txHash: r.row.tx_hash }
       : { status: r.status, reason: `quote already ${r.row.status}` };
   }
-  return { status: r.status, reason: r.reason };
+  if (r.status === 'ESCALATE') return { status: r.status, reason: `${r.reason}. Confirm it: re-run with --approve` };
+  return { status: r.status, reason: withHint(r.reason) };
 }
 
 export async function paidFetch(deps: PaidFetchDeps, args: PaidFetchArgs): Promise<PaidFetchResult> {
@@ -77,13 +89,14 @@ export async function paidFetch(deps: PaidFetchDeps, args: PaidFetchArgs): Promi
   };
 
   const token = await deps.agentToken();
+  const payOpts = deps.humanApproved ? { humanApproved: true } : {};
   const result = await fetchWithPayment(url.toString(), init, {
     chainId: deps.chainId,
     // Non-gateway 402s: the account quote path (server resolves the recipient).
     quoteFor: async (req: PaymentRequirement) =>
       deps.server.requestQuote({ token: req.asset.toLowerCase(), recipient: req.payTo, amount: req.maxAmountRequired, purpose: 'per_call' }),
-    pay: async (quoteId) => settlement(await deps.signer.pay(await deps.server.getQuoteById(quoteId))),
-    paySignedQuote: async (quote) => settlement(await deps.signer.pay(quote)),
+    pay: async (quoteId) => settlement(await deps.signer.pay(await deps.server.getQuoteById(quoteId), payOpts)),
+    paySignedQuote: async (quote) => settlement(await deps.signer.pay(quote, payOpts)),
     ...(token ? { agentToken: token } : {}),
     creditsOrigins: deps.creditsOrigins,
     ...(deps.fetchImpl ? { fetchImpl: deps.fetchImpl } : {}),

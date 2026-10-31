@@ -7,7 +7,6 @@ import { randomBytes } from 'node:crypto';
 import { renderBanner, colorSupported, COMPACT_BANNER } from '../src/brand/banner.js';
 import { scaffoldPolicy, USDC_BY_CHAIN } from '../src/init/policy-scaffold.js';
 import { satisfiesMin, checkNode, detectExistingInstall } from '../src/init/preflight.js';
-import { buildServerEntry, mergeMcpConfig, registerWithHost, manualSnippet } from '../src/init/mcp-host.js';
 import { runInit, refuseMainWalletKey } from '../src/init/wizard.js';
 import { silentIO } from '../src/init/prompts.js';
 import { loadConfig } from '../src/config/config.js';
@@ -51,7 +50,7 @@ describe('policy scaffold (fail-closed)', () => {
     expect(p.perTxCap[usdc]).toBe('1000000');
     expect(p.dailyCap[usdc]).toBe('5000000');
     expect(p.subscriptionReserve[usdc]).toBe('0');
-    expect(p.requireHumanAboveTx[usdc]).toBe('500000');
+    expect(p.requireHumanAboveTx[usdc]).toBeUndefined(); // payments run unattended within the caps
     expect(p.recipients).toEqual([]); // cannot pay until a payee is added
   });
 });
@@ -65,21 +64,6 @@ describe('preflight', () => {
   });
   it('checkNode reports the running version', () => {
     expect(checkNode().version).toBe(process.versions.node);
-  });
-});
-
-describe('mcp host registration', () => {
-  it('builds the server entry (exactly mcp:serve)', () => {
-    expect(buildServerEntry()).toEqual({ command: 'cryptocadet', args: ['mcp:serve'] });
-  });
-  it('merges without clobbering other servers', () => {
-    const merged = mergeMcpConfig({ mcpServers: { other: { command: 'x', args: [] } } }, buildServerEntry());
-    expect((merged.mcpServers as Record<string, unknown>).other).toBeTruthy();
-    expect((merged.mcpServers as Record<string, unknown>).cryptocadet).toEqual({ command: 'cryptocadet', args: ['mcp:serve'] });
-  });
-  it('manualSnippet is valid JSON naming the four-verb server', () => {
-    const snippet = JSON.parse(manualSnippet());
-    expect(snippet.mcpServers.cryptocadet.args).toEqual(['mcp:serve']);
   });
 });
 
@@ -127,12 +111,11 @@ describe('init wizard (non-interactive)', () => {
     expect(loadConfig().serverQuotePubKey).toBe('FETCHED_KEY');
   });
 
-  it('registers the MCP host when asked (exactly the cryptocadet server)', async () => {
-    const hostConfigPath = join(home, 'claude_desktop_config.json');
-    const s = await runInit({ ...base, registerHost: true }, { io: silentIO(), hostConfigPath });
-    expect(s.mcpRegistered).toBe(true);
-    const cfg = JSON.parse(readFileSync(hostConfigPath, 'utf8'));
-    expect(cfg.mcpServers.cryptocadet).toEqual({ command: 'cryptocadet', args: ['mcp:serve'] });
+  it('defaults to Base mainnet, matching the hosted server', async () => {
+    const { network: _n, ...noNetwork } = base;
+    const s = await runInit(noNetwork, { io: silentIO() });
+    expect(s.chainId).toBe(8453);
+    expect(loadConfig().chainId).toBe(8453);
   });
 
   it('refuses a main wallet key in any mode', () => {

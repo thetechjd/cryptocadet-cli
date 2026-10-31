@@ -51,7 +51,7 @@ export interface Policy {
 }
 
 /** A policy value OR a provider that returns the current one. A provider lets long-running
- *  consumers (the resident mcp:serve signer + agent tools) pick up edits made by human-only
+ *  consumers pick up edits made by
  *  CLI verbs without a restart — see makePolicyProvider in config/policy-store. */
 export type PolicyRef = Policy | (() => Policy);
 

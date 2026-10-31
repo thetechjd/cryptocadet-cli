@@ -37,7 +37,7 @@ export function loadPolicy(): Policy {
 
 /**
  * A policy provider that re-reads policy.json whenever the file changes on disk, caching by
- * mtime. Long-running consumers (the resident `mcp:serve` signer + agent tools) must read
+ * mtime. Long-running consumers must read
  * policy through this — NOT capture a snapshot at startup — so a `policy:set` edit (raising a
  * cap, etc.) takes effect immediately instead of being ignored until the server restarts.
  * A malformed edit throws from loadPolicy's validate(), so the enforcer fails loud, never

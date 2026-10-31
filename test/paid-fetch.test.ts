@@ -53,7 +53,7 @@ function deps(over: Partial<PaidFetchDeps> & { fetchImpl: typeof fetch }): PaidF
   };
 }
 
-describe('paidFetch (agent fetch_paid / CLI fetch)', () => {
+describe('paidFetch (cryptocadet fetch)', () => {
   it('card-funded agent: pays with credits on the gateway and signs nothing', async () => {
     const g = gateway();
     const d = deps({ fetchImpl: g.fetchImpl, agentToken: async () => 'ccx_agent_abc' });
@@ -67,16 +67,18 @@ describe('paidFetch (agent fetch_paid / CLI fetch)', () => {
     const d = deps({ fetchImpl: g.fetchImpl });
     const r = await paidFetch(d, { url: ITEM });
     expect(r).toMatchObject({ status: 200, paid: true, rail: 'usdc', quoteId: QUOTE.quoteId, txHash: '0xpaid' });
-    expect(d.pay).toHaveBeenCalledWith(QUOTE);
+    expect(d.pay).toHaveBeenCalledWith(QUOTE, {}); // no human confirmation unless --approve
     const proof = JSON.parse(Buffer.from(g.seen.at(-1)!.headers['X-PAYMENT']!, 'base64').toString());
     expect(proof).toMatchObject({ quoteId: QUOTE.quoteId, txHash: '0xpaid', redeemToken: 'ccr_secret' });
   });
 
-  it('a policy refusal is reported and the request is not retried', async () => {
+  it('a policy refusal says how to fix it, and the request is not retried', async () => {
     const g = gateway();
     const d = deps({ fetchImpl: g.fetchImpl });
-    d.pay.mockResolvedValueOnce({ status: 'REFUSED', quoteId: QUOTE.quoteId, reason: 'recipient not allowlisted' } as never);
-    await expect(paidFetch(d, { url: ITEM })).rejects.toThrow(/recipient not allowlisted/);
+    d.pay.mockResolvedValueOnce({ status: 'REFUSED', quoteId: QUOTE.quoteId, reason: `recipient not allowlisted ${QUOTE.recipient}` } as never);
+    await expect(paidFetch(d, { url: ITEM })).rejects.toThrow(
+      `cryptocadet allowlist:add --kind recipient --address ${QUOTE.recipient}`,
+    );
     expect(g.seen.some((s) => s.headers['X-PAYMENT'])).toBe(false);
   });
 
@@ -99,5 +101,15 @@ describe('paidFetch (agent fetch_paid / CLI fetch)', () => {
     const d = deps({ fetchImpl, agentToken: async () => 'ccx_agent_abc' });
     expect(await paidFetch(d, { url: ITEM })).toMatchObject({ status: 200, paid: false, rail: null, body: 'free' });
     expect(d.pay).not.toHaveBeenCalled();
+  });
+
+  it('--approve confirms a payment above the human-confirm threshold; without it the hint says so', async () => {
+    const g = gateway();
+    const d = deps({ fetchImpl: g.fetchImpl });
+    d.pay.mockResolvedValueOnce({ status: 'ESCALATE', quoteId: QUOTE.quoteId, reason: 'above human-confirm threshold' } as never);
+    await expect(paidFetch(d, { url: ITEM })).rejects.toThrow(/re-run with --approve/);
+    const approved = deps({ fetchImpl: gateway().fetchImpl, humanApproved: true });
+    await paidFetch(approved, { url: ITEM });
+    expect(approved.pay).toHaveBeenCalledWith(QUOTE, { humanApproved: true });
   });
 });

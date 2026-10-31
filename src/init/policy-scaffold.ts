@@ -17,7 +17,6 @@ const DEFAULTS = {
   perTx: '1000000', // 1.00 USDC
   daily: '5000000', // 5.00 USDC
   reserve: '0',
-  humanAbove: '500000', // 0.50 USDC — escalate above this
 };
 
 // Conservative gas top-up defaults. Base gas is fractions of a cent, so a few ten-thousandths
@@ -36,7 +35,8 @@ export function scaffoldPolicy(chainId: 8453 | 84532): Policy {
   p.perTxCap[usdc] = DEFAULTS.perTx;
   p.dailyCap[usdc] = DEFAULTS.daily;
   p.subscriptionReserve[usdc] = DEFAULTS.reserve;
-  p.requireHumanAboveTx[usdc] = DEFAULTS.humanAbove;
+  // No human-confirm threshold by default: payments run unattended within the caps. Set one
+  // with `policy:set --kind requireHumanAbove`; `fetch --approve` then confirms above it.
   p.gasSwap = { enabled: true, ...GAS_SWAP_DEFAULTS };
   // recipients stays [] on purpose — fail closed until the user adds a payee.
   return p;

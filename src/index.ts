@@ -15,8 +15,6 @@ export { reconcilePending } from './signer/reconcile.js';
 export { reserveCheck } from './subscription/reserve.js';
 export { sweep, discoverTokens } from './revoke/sweep.js';
 export { rotateAgent } from './revoke/rotate.js';
-export { AGENT_TOOL_NAMES, buildAgentTools } from './mcp/agent-tools.js';
-export type { AgentToolName } from './mcp/agent-tools.js';
 export { buildRuntime } from './runtime.js';
 export { httpServerClient } from './server/client.js';
 export type {
@@ -26,7 +24,6 @@ export type {
 export { paidFetch, type PaidFetchDeps, type PaidFetchArgs, type PaidFetchResult } from './x402/paid-fetch.js';
 export { dashboardSync, buildBalanceSnapshots, buildTopupAlerts } from './dashboard/sync.js';
 export type { SyncReport } from './dashboard/sync.js';
-export { buildMcpServer, connectStdio } from './mcp/mcp-server.js';
 export {
   fetchWithPayment,
   parseChallenge,
@@ -53,10 +50,9 @@ export { runInit, refuseMainWalletKey } from './init/wizard.js';
 export type { InitOptions, InitSummary, WizardIO, Role, Network } from './init/wizard.js';
 export { scaffoldPolicy, USDC_BY_CHAIN } from './init/policy-scaffold.js';
 export { checkNode, detectKeychainBackend, detectExistingInstall } from './init/preflight.js';
-export { registerWithHost, detectMcpHosts, manualSnippet, buildServerEntry } from './init/mcp-host.js';
 export { storeCredential, readCredential, clearCredential, authHeader } from './server/auth.js';
 export type { StoredCredential, CredentialKind } from './server/auth.js';
 export { buildTopupRequest } from './topup/topup.js';
 export type { TopupRequest, TopupTarget } from './topup/topup.js';
 export { requireDep } from './util/require-dep.js';
-export * as mcpLifecycle from './mcp/lifecycle.js';
+

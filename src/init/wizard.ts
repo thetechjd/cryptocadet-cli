@@ -18,7 +18,6 @@ import { readCredential, authHeader } from '../server/auth.js';
 import { paths } from '../config/paths.js';
 import { scaffoldPolicy, USDC_BY_CHAIN } from './policy-scaffold.js';
 import { checkNode, detectKeychainBackend, detectExistingInstall } from './preflight.js';
-import { registerWithHost, claudeDesktopConfigPath, manualSnippet, detectMcpHosts } from './mcp-host.js';
 
 export type Role = 'buyer' | 'seller' | 'both';
 export type Network = 'base-sepolia' | 'base-mainnet';
@@ -49,14 +48,12 @@ export interface InitOptions {
   apiKey?: string; // server login credential
   apiKeyKind?: 'apikey' | 'jwt';
   payout?: string; // seller payout address
-  registerHost?: boolean;
   json?: boolean;
 }
 
 export interface InitDeps {
   io: WizardIO;
   fetchImpl?: typeof fetch;
-  hostConfigPath?: string; // override for tests
 }
 
 export interface InitSummary {
@@ -70,7 +67,6 @@ export interface InitSummary {
   serverBaseUrl?: string;
   loggedIn: boolean;
   payoutSet: boolean;
-  mcpRegistered: boolean;
   keychainBackend: string;
   keychainAvailable: boolean;
 }
@@ -102,10 +98,12 @@ async function chooseRole(opts: InitOptions, io: WizardIO): Promise<Role> {
   return a === 'seller' || a === 'both' ? (a as Role) : 'buyer';
 }
 
+// Base mainnet by default: the hosted server (DEFAULT_SERVER_URL) runs on mainnet, and a
+// wallet configured for another chain than its server refuses every quote ("wrong chain").
 async function chooseNetwork(opts: InitOptions, io: WizardIO): Promise<Network> {
   if (opts.network) return opts.network;
-  if (opts.yes) return 'base-sepolia';
-  const mainnet = await io.confirm('Use Base MAINNET? (default is Sepolia testnet for a safe first run)', false);
+  if (opts.yes) return 'base-mainnet';
+  const mainnet = await io.confirm('Use Base mainnet? (answer no only for a Sepolia testnet server)', true);
   return mainnet ? 'base-mainnet' : 'base-sepolia';
 }
 
@@ -137,7 +135,6 @@ export async function runInit(opts: InitOptions, deps: InitDeps): Promise<InitSu
     policyPath: paths.policy(),
     loggedIn: false,
     payoutSet: false,
-    mcpRegistered: false,
     keychainBackend: kc.backend,
     keychainAvailable: kc.available,
   };
@@ -168,9 +165,10 @@ export async function runInit(opts: InitOptions, deps: InitDeps): Promise<InitSu
     if (!quiet) {
       io.print('');
       io.print(`Agent wallet: ${address}`);
-      io.print('  This wallet starts EMPTY. Fund it from your own wallet in batches — keep only a');
-      io.print('  working float here. Your main wallet key is never entered anywhere in this tool.');
-      io.print(`  Policy scaffolded at ${paths.policy()} (USDC allowlisted, no payees yet → cannot pay until you add one).`);
+      io.print('  This wallet starts EMPTY. Keep only a working float here; your main wallet key is');
+      io.print('  never entered anywhere in this tool.');
+      io.print(`  Policy at ${paths.policy()}: USDC, $1 per payment, $5 per day. Each seller must be`);
+      io.print('  allowlisted once before the wallet pays them (`fetch` prints the exact command).');
     }
   } else if (wantsBuyer && !fresh) {
     // Re-run: NEVER regenerate the key.
@@ -204,29 +202,20 @@ export async function runInit(opts: InitOptions, deps: InitDeps): Promise<InitSu
     }
   }
 
-  // ── 8. MCP host registration ──
-  const doRegister = opts.registerHost ?? (opts.yes ? false : wantsBuyer && (await io.confirm('Register the agent with Claude Desktop (MCP)?', false)));
-  if (doRegister) {
-    const path = deps.hostConfigPath ?? claudeDesktopConfigPath();
-    const res = registerWithHost(path);
-    summary.mcpRegistered = res.registered;
-    if (!quiet) io.print(`Registered MCP server 'cryptocadet' in ${res.configPath} (exposes exactly: check_balance, quote_payment, pay, dry_run).`);
-  } else if (!quiet && wantsBuyer) {
-    const hosts = detectMcpHosts();
-    if (!hosts.some((h) => h.present)) {
-      io.print('');
-      io.print('No MCP host detected. To wire an agent manually, add to your host config:');
-      io.print(manualSnippet());
-    }
-  }
-
-  // ── 9. Summary ──
+  // ── 8. Summary ──
   if (!quiet) {
     io.print('');
     io.print('Setup complete.');
-    if (summary.agentAddress) io.print(`  • Agent ${summary.agentAddress} on ${network} (balance: 0 — fund it to begin)`);
-    io.print(`  • Policy is local at ${summary.policyPath}; edit only with \`cryptocadet policy:set\` (never from the web).`);
-    io.print('  • Try a dry run: obtain a quote, then `cryptocadet mcp:serve` and have your agent call dry_run before pay.');
+    if (summary.agentAddress) io.print(`  • Agent ${summary.agentAddress} on ${network}`);
+    io.print('');
+    io.print('Fund it one of two ways:');
+    io.print(`  1. Crypto: send USDC (and a little ETH for gas) on Base to ${summary.agentAddress ?? 'the agent address'}`);
+    io.print('  2. Card:   cryptocadet login --value <api key>');
+    io.print('             cryptocadet credits:buy --usd 5');
+    io.print('             cryptocadet agent-token:create --name my-agent --daily-usd 5');
+    io.print('');
+    io.print('Then pay for anything behind a CryptoCadet 402:');
+    io.print('  cryptocadet fetch https://api.v4.cryptocadet.app/v4/g/<seller>/<item>');
   }
   return summary;
 }

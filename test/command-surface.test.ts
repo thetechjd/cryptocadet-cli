@@ -1,58 +1,41 @@
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { AGENT_TOOL_NAMES } from '../src/mcp/agent-tools.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
+const root = join(here, '..');
 // Strip comments: we assert on CODE, not prose that explains what is deliberately absent.
 const stripComments = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
-const src = (p: string) => stripComments(readFileSync(join(here, '..', 'src', p), 'utf8'));
+const src = (p: string) => stripComments(readFileSync(join(root, 'src', p), 'utf8'));
 
-// The human-only verbs the CLI exposes. NONE may appear on the agent transport.
-const HUMAN_ONLY_VERBS = [
-  'wallet:show', 'policy:show', 'policy:set', 'allowlist:add', 'allowlist:remove',
-  'topup:request', 'checkout', 'rotate', 'sweep', 'reserve:check',
-  'login', 'logout', 'product:list', 'product:create', 'product:update', 'product:disable',
-  'payout:set', 'subs:list', 'subs:create', 'subs:cancel', 'history',
-  'collector:init', 'collector:serve', 'treasury:init', 'treasury:serve',
-  'handle:set', 'credits:show', 'credits:buy', 'credits:verify',
-  'agent-token:create', 'agent-token:list', 'agent-token:revoke', 'agent-token:clear', 'fetch',
-];
-
-describe('two-surface separation (instruction 02 acceptance)', () => {
-  it('the agent transport exposes EXACTLY the five agent verbs', () => {
-    expect([...AGENT_TOOL_NAMES].sort()).toEqual(['check_balance', 'dry_run', 'fetch_paid', 'pay', 'quote_payment']);
+describe('command surface: plain CLI, no MCP', () => {
+  it('ships no MCP server, tool registry or host registration', () => {
+    expect(existsSync(join(root, 'src', 'mcp'))).toBe(false);
+    expect(existsSync(join(root, 'src', 'init', 'mcp-host.ts'))).toBe(false);
+    const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')) as { dependencies?: Record<string, string> };
+    expect(Object.keys(pkg.dependencies ?? {})).not.toContain('@modelcontextprotocol/sdk');
+    expect(src('cli/index.ts')).not.toContain("'mcp:serve'");
   });
 
-  it('no human-only verb is also an agent verb (disjoint surfaces)', () => {
-    for (const v of HUMAN_ONLY_VERBS) expect(AGENT_TOOL_NAMES as readonly string[]).not.toContain(v);
-  });
-
-  it('the agent tool module never references key/limit/allowlist/rotate/sweep operations', () => {
-    const agentSrc = src('mcp/agent-tools.ts');
-    for (const banned of ['rotate', 'sweep', 'unlockAgentPrivateKey', 'setLimit', 'editAllowlist', 'export_key', 'export-key']) {
-      expect(agentSrc).not.toContain(banned);
-    }
-  });
-
-  it('the agent can spend credits (fetch_paid) but never read, create or clear the token', () => {
-    // The agent tools only receive a fetchPaid function; the keychain token module, card
-    // top-ups and token issuance stay on the human CLI.
-    const agentSrc = src('mcp/agent-tools.ts');
-    for (const banned of ['agent-token', 'readAgentToken', 'storeAgentToken', 'createAgentToken', 'creditsCheckout', 'getKeychain']) {
-      expect(agentSrc).not.toContain(banned);
-    }
-    // fetch_paid pays USDC only through the gated signer (no broadcast primitive in the client).
+  it('`fetch` pays USDC only through the gated signer; credits only via the token', () => {
     const paid = src('x402/paid-fetch.ts');
     expect(paid).toContain('deps.signer.pay(');
-    for (const banned of ['sendTransfer(', 'sendRoutedPayment(', 'broadcast(']) expect(paid).not.toContain(banned);
+    for (const banned of ['sendTransfer(', 'sendRoutedPayment(', 'broadcast(', 'unlockAgentPrivateKey']) {
+      expect(paid).not.toContain(banned);
+    }
   });
 
-  it('the runtime registers tools ONLY via buildAgentTools (single registration path)', () => {
+  it('the x402 client never reads, creates or clears the credits token itself', () => {
+    // The runtime injects a reader; issuing tokens and card top-ups are separate commands.
+    const paid = src('x402/paid-fetch.ts');
+    for (const banned of ['agent-token', 'readAgentToken', 'storeAgentToken', 'createAgentToken', 'creditsCheckout', 'getKeychain']) {
+      expect(paid).not.toContain(banned);
+    }
+  });
+
+  it('the runtime does not pull in policy-editing or wallet-draining code', () => {
     const rt = src('runtime.ts');
-    expect(rt).toContain('buildAgentTools(');
-    // The runtime must not pull in the human-only verb implementations.
     expect(rt).not.toContain('human-verbs');
     expect(rt).not.toContain('revoke/sweep');
   });

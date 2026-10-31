@@ -33,9 +33,7 @@
     "prepublishOnly": "npm run typecheck && npm run test"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.29.0",
-    "ethers": "^6.13.0",
-    "zod": "^3.25.76"
+    "ethers": "^6.13.0"
   },
   "optionalDependencies": {
     "@napi-rs/keyring": "^1.1.0"

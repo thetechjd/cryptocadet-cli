@@ -1,11 +1,9 @@
 #!/usr/bin/env node
 // The `cryptocadet` binary (alias `ccx`).
 //
-// Command surface is grouped on two axes: local-vs-remote state, and
-// agent-exposed-vs-human-only. EVERY verb in this file is HUMAN-ONLY — none of them are
-// registered on the agent transport. The agent transport exposes exactly the five verbs
-// in src/mcp/agent-tools.ts (check_balance, quote_payment, pay, dry_run) and nothing
-// else; `mcp:serve` wires only those.
+// Commands are grouped by local state (wallet, policy) vs remote state (the server's
+// catalog, credits, history). Agents pay with `cryptocadet fetch <url>`: every payment goes
+// through the single policy-gated signer, or spends card-funded credits capped server-side.
 
 import { fileURLToPath } from 'node:url';
 import { parseUnits, formatUnits } from 'ethers';
@@ -34,8 +32,6 @@ import { USDC_BY_CHAIN } from '../init/policy-scaffold.js';
 import { grantSubscriptionApproval, revokeSubscriptionApproval } from '../subscription/grant.js';
 import { Ledger } from '../ledger/ledger.js';
 import { buildRuntime } from '../runtime.js';
-import { AGENT_TOOL_NAMES } from '../mcp/agent-tools.js';
-import { buildMcpServer, connectStdio } from '../mcp/mcp-server.js';
 import { createRequire } from 'node:module';
 
 function pkgVersion(): string {
@@ -46,7 +42,6 @@ function pkgVersion(): string {
     return '0.0.0';
   }
 }
-import { startDetached, stop, status, writePid, clearPid } from '../mcp/lifecycle.js';
 
 function flag(args: string[], name: string): string | undefined {
   const i = args.indexOf(`--${name}`);
@@ -94,7 +89,7 @@ const VERBS = [
   'collector:init', 'collector:serve', 'treasury:init', 'treasury:serve',
   'handle:set', 'credits:show', 'credits:buy', 'credits:verify',
   'agent-token:create', 'agent-token:list', 'agent-token:revoke', 'agent-token:clear', 'fetch',
-  'mcp:serve', 'version',
+  'version',
 ];
 
 /** "$4.25" / "4.25" → micro-USD base units (USDC has 6 decimals, 1 USD = 1 USDC). */
@@ -166,10 +161,8 @@ async function main(): Promise<void> {
         ...(apiKey ? { apiKey } : {}),
         ...(kind ? { apiKeyKind: kind as 'apikey' | 'jwt' } : {}),
         ...(payout ? { payout } : {}),
-        ...(has(args, 'register-host') ? { registerHost: true } : {}),
       };
       const summary = await runInit(opts, { io });
-      if (has(args, 'serve')) startDetached(fileURLToPath(import.meta.url));
       if (json) out(summary);
       break;
     }
@@ -442,7 +435,9 @@ async function main(): Promise<void> {
       out({ ok: true });
       break;
     case 'fetch': {
-      // The human twin of the agent's fetch_paid: fetch a URL, paying a 402 if needed.
+      // Fetch a URL, paying an HTTP 402 if needed: card-funded credits on a CryptoCadet
+      // gateway (agent-token:create), else USDC from the agent wallet within local policy.
+      // --approve confirms a payment above a requireHumanAbove threshold, if one is set.
       const url = args[0] && !args[0].startsWith('--') ? args[0] : req(flag(args, 'url'), 'url');
       const rt = await buildRuntime();
       try {
@@ -452,7 +447,7 @@ async function main(): Promise<void> {
             ...(flag(args, 'method') ? { method: flag(args, 'method')! } : {}),
             ...(flag(args, 'data') !== undefined ? { body: flag(args, 'data')! } : {}),
             headers: headerFlags(args),
-          }),
+          }, { humanApproved: has(args, 'approve') }),
         );
       } finally {
         rt.close();
@@ -544,44 +539,6 @@ async function main(): Promise<void> {
         stop();
         process.exit(0);
       });
-      break;
-    }
-
-    // ===================== MCP serve lifecycle =====================
-    case 'mcp:serve': {
-      if (has(args, 'status')) {
-        out(status());
-        break;
-      }
-      if (has(args, 'stop')) {
-        out(stop());
-        break;
-      }
-      if (has(args, 'detach')) {
-        const pid = startDetached(fileURLToPath(import.meta.url));
-        out({ detached: true, pid });
-        break;
-      }
-      // Foreground: build the live runtime (unlock key, reconcile pending) and register
-      // ONLY the five agent verbs. `--foreground` is the detached child; a bare run is
-      // attached. Either way we record our own pid for status/stop and clear it on exit.
-      const rt = await buildRuntime();
-      writePid(process.pid);
-      // stdout is the MCP JSON-RPC channel — ALL logging stays on stderr.
-      console.error(`cryptocadet mcp serving agent=${rt.agentAddress} tools=[${rt.toolNames.join(', ')}]`);
-      console.error(`registered agent tools: ${AGENT_TOOL_NAMES.join(', ')}`);
-      const mcp = buildMcpServer(rt.tools, { name: 'cryptocadet', version: pkgVersion() });
-      const closeTransport = await connectStdio(mcp);
-      const shutdown = () => {
-        clearPid();
-        void closeTransport();
-        rt.close();
-        process.exit(0);
-      };
-      process.on('SIGTERM', shutdown);
-      process.on('SIGINT', shutdown);
-      // The stdio transport reads stdin and keeps the process (and the in-memory key) alive
-      // for the session; the key is dropped when the process exits.
       break;
     }
 

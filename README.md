@@ -11,18 +11,43 @@ control (no smart account, no on-chain caveat enforcer), and signs ERC-20 paymen
 ## Install
 
 ```
-macOS:      brew install thetechjd/cryptocadet-cli/cryptocadet
-Linux:      curl -fsSL https://cryptocadet.app/install.sh | sh
-Node (any): npm i -g @cryptocadet/cli
-
-Then:       cryptocadet init
+Linux / macOS:  curl -fsSL https://cryptocadet.app/install.sh | sh
+macOS (brew):   brew install thetechjd/cryptocadet-cli/cryptocadet
+Node (any):     npm i -g @cryptocadet/cli
 ```
 
-The brew and curl artifacts are self-contained binaries (Node 24 embedded) — no node,
-npm, or `node_modules` on the user's machine. The npm channel needs Node ≥ 22.5 (built-in
-`node:sqlite`). Windows: use the npm channel for v4.0. The curl installer is [install.sh](install.sh)
-at the repo root (served from https://cryptocadet.app/install.sh); the build script, Homebrew
-formula, and release checklist live in [packaging/](packaging/).
+The curl installer sets up a private, SHA256-verified Node 24 under `~/.cryptocadet-cli` and
+installs this npm package (the same one brew and npm install). The npm channel needs
+Node >= 22.5 (built-in `node:sqlite`). Windows: `install.ps1` or npm. The installer source is
+[install.sh](install.sh); the copy served at cryptocadet.app lives in the v2 frontend's
+`public/` and must be kept in sync.
+
+## Quick start
+
+```bash
+cryptocadet init                      # creates an empty agent wallet on Base mainnet
+```
+
+Fund the agent one of two ways:
+
+```bash
+# 1. Crypto: send USDC (and a little ETH for gas) on Base to the printed agent address.
+
+# 2. Card: buy credits and give the agent a capped token (kept in the OS keychain).
+cryptocadet login --value <api key>
+cryptocadet credits:buy --usd 5       # opens Stripe Checkout
+cryptocadet agent-token:create --name my-agent --per-call-usd 2 --daily-usd 5
+```
+
+Then pay for anything behind a CryptoCadet 402:
+
+```bash
+cryptocadet fetch https://api.v4.cryptocadet.app/v4/g/<seller>/<item>
+```
+
+`fetch` tries card credits first (only towards the CryptoCadet server), then USDC from the
+agent wallet within local policy: $1 per payment and $5 per day by default, and each seller
+allowlisted once (`fetch` prints the exact `allowlist:add` command when it refuses).
 
 ## The load-bearing guarantee
 
@@ -65,41 +90,35 @@ wallet.** Top-up from the main wallet is always a human action; nothing auto-dra
   Transfer-log scan), so a forgotten long-tail token is drained too; native gas is
   drained last.
 
-## Surfaces
+## Commands
 
-The client is one binary (`cryptocadet`, alias `ccx`) serving both roles — an account can
-be both buyer and seller. Commands are grouped on two axes: local-vs-remote state, and
-agent-exposed-vs-human-only.
+One binary (`cryptocadet`, alias `ccx`); an account can be both buyer and seller. Agents use
+the same CLI (e.g. `cryptocadet fetch`) or the library (`paidFetch`, `fetchWithPayment`).
 
-**Agent-facing MCP (exactly four verbs — [`AGENT_TOOL_NAMES`](src/mcp/agent-tools.ts)):**
-`check_balance`, `quote_payment`, `pay`, `dry_run`. Wired in [runtime.ts](src/runtime.ts)
-via `buildAgentTools` only; [test/command-surface.test.ts](test/command-surface.test.ts)
-proves the two surfaces are disjoint.
+**Pay:** `fetch <url> [--method M] [--data D] [--header 'K: V'] [--approve]` — fetch a URL and
+settle its 402. `checkout --quote-json <json> | --quote-file <path> [--allowlist-recipient]
+[--approve]` — pay a full merchant-supplied `SignedQuote` (a merchant's own server account
+issues it, so the buyer can't re-fetch it by id). Both pay USDC only through the **same gated
+`PaymentSigner.pay()`**: serverSig re-verified against the pinned pubkey, every field
+re-checked against local policy, then the single broadcast. `--approve` confirms a payment
+above a `requireHumanAbove` threshold if you set one (none by default).
 
-**LOCAL state — human-only (keys + policy, never leave the machine):** `init`,
-`wallet:show`, `policy:show`, `policy:set` (caps/reserve/escalation), `allowlist:add`/
-`allowlist:remove` (tokens + recipients), `topup:request` (human-approved, no auto-drain),
-`checkout` (pay a merchant-supplied signed quote — see below), `rotate` (`--and-sweep --to`),
-`sweep --to <addr>`, `reserve:check`.
+**Card credits:** `credits:show`, `credits:buy --usd N`, `credits:verify --session <id>`,
+`agent-token:create --name N [--per-call-usd X] [--daily-usd Y] [--sellers a,b]`,
+`agent-token:list`, `agent-token:revoke --id`, `agent-token:clear`.
 
-**`checkout --quote-json <json> | --quote-file <path> [--allowlist-recipient] [--approve|--yes]`**
-— the human one-shot pay verb, for merchant checkout flows (e.g. a host tool topping up a
-credit balance). The merchant issues a quote from *its own* server account, so the buyer
-cannot re-fetch it by id (`GET /v4/quotes/:id` is account-scoped); instead the merchant
-hands over the full `SignedQuote` and this verb pays it through the **same gated
-`PaymentSigner.pay()`** the agent transport uses — the serverSig is re-verified against the
-pinned pubkey and every field re-checked against local policy before the single broadcast,
-so the quote's transport need not be trusted. `--allowlist-recipient` adds the quote's
-payout to the recipient allowlist first (the fail-closed policy ships with none);
-`--approve` confirms an above-threshold (ESCALATE) quote out-of-band. Reads the quote from
-`--quote-json`, `--quote-file`, or piped stdin.
+**Wallet + policy (local, never leave the machine):** `init`, `wallet:show`, `policy:show`,
+`policy:set` (caps/reserve/escalation), `allowlist:add`/`allowlist:remove` (tokens +
+recipients), `topup:request`, `rotate` (`--and-sweep --to`), `sweep --to <addr>`,
+`reserve:check`.
 
-**REMOTE state — server postgres via authenticated API (seller/buyer, no key risk):**
-`login`/`logout`, `product:list|create|update|disable`, `payout:set`,
-`subs:list|create|cancel`, `history`.
+**Seller (server API, no key risk):** `login`/`logout`, `handle:set`,
+`product:list|create|update|disable` (`product:create --slug --kind hosted|proxy --usd
+--content-file` puts an item behind the 402 gateway), `payout:set`, `subs:list|create|cancel`,
+`history`.
 
-**`mcp:serve [--detach|--stop|--status]`** — RDK detach pattern: PID file under
-`~/.cryptocadet`, keychain unlock on detached start, clean stop/status.
+**Operators:** `collector:init|serve` (subscription pulls), `treasury:init|serve` (USDC
+payouts of card-funded earnings).
 
 ## Two secrets, two keychain entries
 

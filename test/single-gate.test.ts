@@ -35,7 +35,7 @@ describe('single gated signer call site', () => {
     const liveB = src('signer/live-broadcaster.ts');
     expect(count(liveB, 'sendTransfer(')).toBe(1);
     // It must not be called anywhere in the agent tool surface or signer directly.
-    expect(src('mcp/agent-tools.ts')).not.toContain('sendTransfer(');
+    expect(src('x402/paid-fetch.ts')).not.toContain('sendTransfer(');
     expect(src('signer/signer.ts')).not.toContain('sendTransfer(');
   });
 
@@ -45,7 +45,7 @@ describe('single gated signer call site', () => {
     // single d.broadcast( call site and its gate.
     const liveB = src('signer/live-broadcaster.ts');
     expect(count(liveB, 'sendRoutedPayment(')).toBe(1);
-    expect(src('mcp/agent-tools.ts')).not.toContain('sendRoutedPayment(');
+    expect(src('x402/paid-fetch.ts')).not.toContain('sendRoutedPayment(');
     expect(src('signer/signer.ts')).not.toContain('sendRoutedPayment(');
     expect(src('signer/signer.ts')).not.toContain('chain/router');
     // The router primitive never transfers to an arbitrary address and never uses the
@@ -56,8 +56,10 @@ describe('single gated signer call site', () => {
     expect(count(router, '.approve!(')).toBe(1);
   });
 
-  it('the agent tool surface never sets humanApproved (escalation is human-only)', () => {
-    expect(src('mcp/agent-tools.ts')).not.toContain('humanApproved');
+  it('the x402 client only confirms an escalation when the caller explicitly asked (fetch --approve)', () => {
+    const paid = src('x402/paid-fetch.ts');
+    expect(count(paid, 'humanApproved: true')).toBe(1);
+    expect(paid).toContain('deps.humanApproved ?');
   });
 
   it('the gas-swap is a self-custody op confined to chain/swap.ts, not a merchant-pay site', () => {
@@ -78,7 +80,7 @@ describe('single gated signer call site', () => {
     expect(count(serve, 'sendPayoutTransfer(')).toBe(1); // exactly one treasury signing site
     expect(serve).not.toContain('sendTransfer(');         // never the agent payment primitive
     expect(executor).not.toContain('sendPayoutTransfer('); // the executor stays key-free
-    for (const f of ['mcp/agent-tools.ts', 'signer/signer.ts', 'signer/live-broadcaster.ts', 'runtime.ts']) {
+    for (const f of ['x402/paid-fetch.ts', 'signer/signer.ts', 'signer/live-broadcaster.ts', 'runtime.ts']) {
       expect(src(f)).not.toContain('treasury');
     }
     expect(count(src('chain/erc20.ts'), 'sendPayoutTransfer(')).toBe(1); // defined once, called only from treasury

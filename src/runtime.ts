@@ -1,6 +1,6 @@
 // Assembles the live agent runtime: unlock the key, build provider/wallet, ledger,
-// the gated PaymentSigner with the real broadcaster, the server client, and the
-// five-verb agent tool registry. Reconciles PENDING payments on start.
+// the gated PaymentSigner with the real broadcaster, the server client, and the x402
+// client behind `cryptocadet fetch`. Reconciles PENDING payments on start.
 //
 // This is the only place the decrypted key meets the chain. The plaintext key lives in
 // the wallet object for the session and is not written to disk.
@@ -19,25 +19,21 @@ import { httpServerClient } from './server/client.js';
 import { readCredential, authHeader } from './server/auth.js';
 import { agentTokenRef, readAgentToken } from './server/agent-token.js';
 import { paidFetch } from './x402/paid-fetch.js';
-import { buildAgentTools, AGENT_TOOL_NAMES, type AgentTool, type AgentToolName } from './mcp/agent-tools.js';
 
 export interface Runtime {
   agentAddress: string;
-  tools: Record<AgentToolName, AgentTool>;
-  toolNames: readonly AgentToolName[];
   readBalance: (token: string) => Promise<string>;
-  /** The single gated signer. Exposed for the human-only `checkout` verb, which pays a
-   *  merchant-supplied signed quote through the SAME `pay()` path the agent tools use —
-   *  it adds NO new signing/broadcast call site (see test/single-gate.test.ts). */
+  /** The single gated signer. `checkout` pays a merchant-supplied signed quote through the
+   *  SAME `pay()` path `fetch` uses — no extra signing call site (test/single-gate.test.ts). */
   signer: PaymentSigner;
-  /** The x402 client behind the agent's fetch_paid, for the human `fetch` verb. */
-  fetchPaid: (args: Parameters<typeof paidFetch>[1]) => ReturnType<typeof paidFetch>;
+  /** The x402 client behind `cryptocadet fetch`: pays a 402 with credits or gated USDC. */
+  fetchPaid: (args: Parameters<typeof paidFetch>[1], opts?: { humanApproved?: boolean }) => ReturnType<typeof paidFetch>;
   close: () => void;
 }
 
 export async function buildRuntime(): Promise<Runtime> {
   const config = loadConfig();
-  // A provider (not a snapshot) so a resident mcp:serve honors policy edits without a restart.
+  // A provider (not a snapshot) so policy edits are honored by a long-running process.
   const policyProvider = makePolicyProvider();
   const policy = policyProvider();
   if (policy.chainId !== config.chainId)
@@ -84,14 +80,11 @@ export async function buildRuntime(): Promise<Runtime> {
     agentToken: () => readAgentToken(agentTokenRef(config.keychainRef)),
     creditsOrigins: [new URL(config.serverBaseUrl).origin],
   };
-  const fetchPaid = (args: Parameters<typeof paidFetch>[1]) => paidFetch(fetchDeps, args);
-
-  const tools = buildAgentTools({ policy: policyProvider, signer, server, readBalance, fetchPaid });
+  const fetchPaid = (args: Parameters<typeof paidFetch>[1], opts: { humanApproved?: boolean } = {}) =>
+    paidFetch({ ...fetchDeps, ...(opts.humanApproved ? { humanApproved: true } : {}) }, args);
 
   return {
     agentAddress: config.agentAddress,
-    tools,
-    toolNames: AGENT_TOOL_NAMES,
     readBalance,
     signer,
     fetchPaid,
