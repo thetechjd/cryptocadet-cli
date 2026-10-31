@@ -39,6 +39,23 @@ describe('single gated signer call site', () => {
     expect(src('signer/signer.ts')).not.toContain('sendTransfer(');
   });
 
+  it('the routed (fee-split) payment is the same tail, not a second path', () => {
+    // A routed quote is paid by approve(router, exact) + router.payWithToken inside ONE
+    // primitive, called from the live broadcaster alongside sendTransfer — still behind the
+    // single d.broadcast( call site and its gate.
+    const liveB = src('signer/live-broadcaster.ts');
+    expect(count(liveB, 'sendRoutedPayment(')).toBe(1);
+    expect(src('mcp/agent-tools.ts')).not.toContain('sendRoutedPayment(');
+    expect(src('signer/signer.ts')).not.toContain('sendRoutedPayment(');
+    expect(src('signer/signer.ts')).not.toContain('chain/router');
+    // The router primitive never transfers to an arbitrary address and never uses the
+    // human-only collector approve primitive.
+    const router = src('chain/router.ts');
+    expect(router).not.toContain('sendTransfer(');
+    expect(router).not.toContain('approveToken(');
+    expect(count(router, '.approve!(')).toBe(1);
+  });
+
   it('the agent tool surface never sets humanApproved (escalation is human-only)', () => {
     expect(src('mcp/agent-tools.ts')).not.toContain('humanApproved');
   });

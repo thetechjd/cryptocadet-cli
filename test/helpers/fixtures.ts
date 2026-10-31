@@ -24,11 +24,11 @@ export function policyWithUsdc(over: Partial<Policy> = {}): Policy {
 
 /** A broadcaster that records every call (i.e. every signature) and confirms instantly. */
 export function recordingBroadcaster(opts: { outcome?: 'confirmed' | 'failed'; throwOnSend?: boolean } = {}) {
-  const calls: Array<{ token: string; recipient: string; amount: string }> = [];
+  const calls: Array<{ token: string; recipient: string; amount: string; route?: { router: string; quoteId: string } }> = [];
   let n = 0;
-  const broadcast: Broadcaster = async (token, recipient, amount): Promise<BroadcastResult> => {
+  const broadcast: Broadcaster = async (token, recipient, amount, route): Promise<BroadcastResult> => {
     if (opts.throwOnSend) throw new Error('rpc down');
-    calls.push({ token, recipient, amount });
+    calls.push(route ? { token, recipient, amount, route } : { token, recipient, amount });
     n += 1;
     const txHash = `0xtx${n}`;
     return { txHash, wait: async () => opts.outcome ?? 'confirmed' };

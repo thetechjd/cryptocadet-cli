@@ -15,6 +15,9 @@ export interface SignedQuote {
   amount: string; // token base units, decimal string (never a number)
   purpose: QuotePurpose;
   expiresAt: number; // unix seconds; client rejects if past
+  /** CryptoCadetRouter to pay through (lowercased), or null to transfer to the recipient
+   *  directly. Must be a router pinned in quote/routers.ts or the quote is refused. */
+  router: string | null;
   serverSig: string; // Ed25519 signature, base64
 }
 

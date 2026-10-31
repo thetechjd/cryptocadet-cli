@@ -42,6 +42,7 @@ export function makeQuote(opts: {
   purpose?: QuotePurpose;
   expiresAt?: number;
   quoteId?: string;
+  router?: string | null;
 }): UnsignedQuote {
   counter += 1;
   return {
@@ -52,5 +53,6 @@ export function makeQuote(opts: {
     amount: opts.amount,
     purpose: opts.purpose ?? 'per_call',
     expiresAt: opts.expiresAt ?? Math.floor(Date.now() / 1000) + 300,
+    router: opts.router ?? null,
   };
 }

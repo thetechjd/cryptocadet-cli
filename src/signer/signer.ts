@@ -22,10 +22,16 @@ export interface BroadcastResult {
   wait: (confirmations: number) => Promise<'confirmed' | 'failed'>;
 }
 
+/** Pay through the pinned CryptoCadetRouter (fee split on-chain) instead of a direct transfer. */
+export interface RouteSpec {
+  router: string;
+  quoteId: string;
+}
+
 /** The actual key-signing operation. Injected so the engine is testable without a chain,
- *  and so the one call site is unambiguous. The real impl signs an ERC-20 transfer with
- *  the agent hot-wallet key. */
-export type Broadcaster = (token: string, recipient: string, amount: string) => Promise<BroadcastResult>;
+ *  and so the one call site is unambiguous. The real impl signs an ERC-20 transfer (or, for
+ *  a routed quote, approve + router.payWithToken) with the agent hot-wallet key. */
+export type Broadcaster = (token: string, recipient: string, amount: string, route?: RouteSpec) => Promise<BroadcastResult>;
 
 export interface SignerDeps {
   /** The policy, or a provider returning the current one. Pass a provider (see
@@ -169,7 +175,8 @@ export class PaymentSigner {
     const recipient = getAddress(quote.recipient); // checksummed for the actual transfer
     let bc: BroadcastResult;
     try {
-      bc = await d.broadcast(quote.token.toLowerCase(), recipient, quote.amount);
+      const route = quote.router ? { router: quote.router.toLowerCase(), quoteId } : undefined;
+      bc = await d.broadcast(quote.token.toLowerCase(), recipient, quote.amount, route);
     } catch (e) {
       // Sign/broadcast failed outright — nothing landed. Mark FAILED so the quote is
       // not retried as a silent double-pay; a fresh quote is required.

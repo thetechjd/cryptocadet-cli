@@ -131,7 +131,7 @@ describe('fetchWithPayment — CryptoCadet gateway rails', () => {
     const fetchImpl = vi.fn(async (url: string, init: RequestInit = {}) => {
       calls.push({ url, init });
       const h = (init.headers as Record<string, string>) ?? {};
-      if (url.endsWith('/v4/gateway/quotes')) return res(201, { quote: QUOTE });
+      if (url.endsWith('/v4/gateway/quotes')) return res(201, { quote: QUOTE, redeemToken: 'ccr_secret' });
       if (h['X-CryptoCadet-Agent']) return res(opts.creditsStatus, opts.creditsBody ?? { content: 'nda' });
       if (h['X-PAYMENT']) return res(200, { content: 'nda via usdc' });
       return res(402, { accepts: [CREDITS, USDC_GW] });
@@ -177,7 +177,8 @@ describe('fetchWithPayment — CryptoCadet gateway rails', () => {
     expect(d.paySignedQuote).toHaveBeenCalledWith(QUOTE);
     expect(d.quoteFor).not.toHaveBeenCalled();
     const proof = (calls.at(-1)!.init.headers as Record<string, string>)['X-PAYMENT'];
-    expect(JSON.parse(Buffer.from(proof!, 'base64').toString())).toMatchObject({ quoteId: 'gw-quote-1', txHash: '0xgw' });
+    // The redeem token (never on-chain) proves this agent requested the quote it paid.
+    expect(JSON.parse(Buffer.from(proof!, 'base64').toString())).toMatchObject({ quoteId: 'gw-quote-1', txHash: '0xgw', redeemToken: 'ccr_secret' });
   });
 
   it('reports the credits refusal when there is no USDC option', async () => {

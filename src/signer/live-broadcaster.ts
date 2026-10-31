@@ -3,6 +3,7 @@
 
 import type { JsonRpcProvider, Wallet } from 'ethers';
 import { sendTransfer, tokenBalance } from '../chain/erc20.js';
+import { sendRoutedPayment } from '../chain/router.js';
 import type { Broadcaster, BroadcastResult } from './signer.js';
 
 export function liveReadBalance(provider: JsonRpcProvider, agentAddress: string) {
@@ -14,9 +15,12 @@ export function liveReadBalance(provider: JsonRpcProvider, agentAddress: string)
  *  merchant transfer. If it throws (e.g. gas cannot be secured), the transfer is not sent and
  *  the error surfaces as a normal broadcast failure with a clear reason. */
 export function liveBroadcaster(wallet: Wallet, beforeSend?: () => Promise<void>): Broadcaster {
-  return async (token, recipient, amount): Promise<BroadcastResult> => {
+  return async (token, recipient, amount, route): Promise<BroadcastResult> => {
     if (beforeSend) await beforeSend();
-    const tx = await sendTransfer(wallet, token, recipient, amount); // <- the actual key signature
+    // <- the actual key signature: routed quotes pay via the pinned router, others directly.
+    const tx = route
+      ? await sendRoutedPayment(wallet, route.router, token, recipient, amount, route.quoteId)
+      : await sendTransfer(wallet, token, recipient, amount);
     return {
       txHash: tx.hash,
       wait: async (confirmations) => {

@@ -8,7 +8,7 @@ import type { UnsignedQuote, SignedQuote } from '../types/quote.js';
 export function canonicalQuoteBytes(q: UnsignedQuote): Uint8Array {
   // Fixed field order. Amounts/ids are strings; numbers are emitted as decimal integers.
   const canonical = JSON.stringify([
-    'cryptocadet.quote.v1',
+    'cryptocadet.quote.v2',
     q.quoteId,
     q.chainId,
     q.token.toLowerCase(),
@@ -16,6 +16,7 @@ export function canonicalQuoteBytes(q: UnsignedQuote): Uint8Array {
     q.amount,
     q.purpose,
     q.expiresAt,
+    q.router ? q.router.toLowerCase() : null, // v2: the router is signed, so it can't be dropped
   ]);
   return new TextEncoder().encode(canonical);
 }

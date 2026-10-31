@@ -2,6 +2,9 @@ import { describe, it, expect } from 'vitest';
 import { verifyQuote } from '../src/quote/verify.js';
 import { makeTestQuoteSigner, makeQuote } from './helpers/quote-signer.js';
 import { USDC, SELLER } from './helpers/fixtures.js';
+import { KNOWN_ROUTERS } from '../src/quote/routers.js';
+
+const ROUTER = KNOWN_ROUTERS[8453]!;
 
 const server = makeTestQuoteSigner();
 const now = 2_000_000_000; // fixed unix seconds
@@ -39,5 +42,27 @@ describe('verifyQuote (case 6)', () => {
     const q = server.signQuote(makeQuote({ token: USDC, recipient: SELLER, amount: '1', expiresAt: now + 100 }));
     q.serverSig = 'AAAA';
     expect(verifyQuote(q, { serverQuotePubKey: server.publicKeyB64, now })).toMatchObject({ ok: false });
+  });
+
+  it('accepts a routed quote naming the pinned router', () => {
+    const q = server.signQuote(makeQuote({ token: USDC, recipient: SELLER, amount: '1', expiresAt: now + 100, router: ROUTER }));
+    expect(verifyQuote(q, { serverQuotePubKey: server.publicKeyB64, now })).toEqual({ ok: true });
+  });
+
+  it('the router is signed: stripping it (to pay direct, skipping the fee) breaks the signature', () => {
+    const q = server.signQuote(makeQuote({ token: USDC, recipient: SELLER, amount: '1', expiresAt: now + 100, router: ROUTER }));
+    q.router = null;
+    expect(verifyQuote(q, { serverQuotePubKey: server.publicKeyB64, now })).toMatchObject({ ok: false, reason: 'invalid serverSig' });
+  });
+
+  it('refuses a correctly signed quote that names an unpinned router (compromised server)', () => {
+    const evil = '0x9999999999999999999999999999999999999999';
+    const q = server.signQuote(makeQuote({ token: USDC, recipient: SELLER, amount: '1', expiresAt: now + 100, router: evil }));
+    expect(verifyQuote(q, { serverQuotePubKey: server.publicKeyB64, now })).toMatchObject({ ok: false, reason: `unknown router ${evil}` });
+  });
+
+  it('refuses the mainnet router on a chain where it is not pinned', () => {
+    const q = server.signQuote(makeQuote({ token: USDC, recipient: SELLER, amount: '1', expiresAt: now + 100, chainId: 84532, router: ROUTER }));
+    expect(verifyQuote(q, { serverQuotePubKey: server.publicKeyB64, now }).ok).toBe(false);
   });
 });

@@ -43,6 +43,9 @@ export function parseSignedQuote(raw: string): SignedQuote {
   if (typeof q.amount !== 'string' || !/^\d+$/.test(q.amount)) throw new Error('checkout: amount must be a base-unit integer string');
   if (typeof q.expiresAt !== 'number' || !Number.isFinite(q.expiresAt)) throw new Error('checkout: expiresAt must be a number');
   if (typeof q.serverSig !== 'string' || q.serverSig.length === 0) throw new Error('checkout: serverSig must be a string');
+  if (q.router !== undefined && q.router !== null && (typeof q.router !== 'string' || !/^0x[0-9a-fA-F]{40}$/.test(q.router))) {
+    throw new Error('checkout: router must be a contract address or null');
+  }
   if (q.purpose !== 'per_call' && q.purpose !== 'subscription_setup') {
     throw new Error("checkout: purpose must be 'per_call' or 'subscription_setup'");
   }
@@ -62,6 +65,7 @@ export function parseSignedQuote(raw: string): SignedQuote {
     amount: q.amount,
     purpose: q.purpose,
     expiresAt: q.expiresAt,
+    router: typeof q.router === 'string' ? q.router.toLowerCase() : null,
     serverSig: q.serverSig,
   };
 }

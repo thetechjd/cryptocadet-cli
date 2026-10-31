@@ -102,9 +102,10 @@ export function isTrustedOrigin(url: string, origins: readonly string[]): boolea
   });
 }
 
-/** The X-PAYMENT proof header value the client sends on retry (base64 JSON). */
-export function buildPaymentProof(quoteId: string, txHash: string): string {
-  const proof = { scheme: 'cryptocadet-v4', quoteId, txHash };
+/** The X-PAYMENT proof header value the client sends on retry (base64 JSON). `redeemToken`
+ *  comes with a gateway quote: the quoteId is public on-chain, the token is not. */
+export function buildPaymentProof(quoteId: string, txHash: string, redeemToken?: string): string {
+  const proof = { scheme: 'cryptocadet-v4', quoteId, txHash, ...(redeemToken ? { redeemToken } : {}) };
   return Buffer.from(JSON.stringify(proof), 'utf8').toString('base64');
 }
 
@@ -153,16 +154,16 @@ async function refusal(res: Response): Promise<string> {
 }
 
 /** Obtain a quote bound to a gateway item from its `quoteUrl`. */
-async function gatewayQuote(req: PaymentRequirement, doFetch: typeof fetch): Promise<SignedQuote> {
+async function gatewayQuote(req: PaymentRequirement, doFetch: typeof fetch): Promise<{ quote: SignedQuote; redeemToken?: string }> {
   const r = await doFetch(req.quoteUrl!, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(req.quoteBody ?? {}),
   });
   if (!r.ok) throw new Error(`x402: gateway quote failed (${await refusal(r)})`);
-  const body = (await r.json()) as { quote?: SignedQuote };
+  const body = (await r.json()) as { quote?: SignedQuote; redeemToken?: string };
   if (!body.quote?.quoteId) throw new Error('x402: gateway quote response had no quote');
-  return body.quote;
+  return typeof body.redeemToken === 'string' ? { quote: body.quote, redeemToken: body.redeemToken } : { quote: body.quote };
 }
 
 /**
@@ -199,10 +200,12 @@ export async function fetchWithPayment(
   }
 
   let quoteId: string;
+  let redeemToken: string | undefined;
   let settlement: PaySettlement;
   if (req.quoteUrl && deps.paySignedQuote) {
-    const quote = await gatewayQuote(req, doFetch);
+    const { quote, redeemToken: token } = await gatewayQuote(req, doFetch);
     quoteId = quote.quoteId;
+    redeemToken = token;
     settlement = await deps.paySignedQuote(quote);
   } else {
     ({ quoteId } = await deps.quoteFor(req));
@@ -213,6 +216,6 @@ export async function fetchWithPayment(
     throw new Error(`x402: payment not settled (${settlement.reason ?? settlement.status})`);
   }
 
-  const response = await doFetch(url, withHeader(init, 'X-PAYMENT', buildPaymentProof(quoteId, settlement.txHash)));
+  const response = await doFetch(url, withHeader(init, 'X-PAYMENT', buildPaymentProof(quoteId, settlement.txHash, redeemToken)));
   return { response, paid: true, rail: 'usdc', quoteId, txHash: settlement.txHash };
 }

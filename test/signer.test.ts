@@ -172,3 +172,34 @@ describe('PaymentSigner — full flow', () => {
     void p;
   });
 });
+
+describe('PaymentSigner — routed (fee-split) payments', () => {
+  const ROUTER = '0xffe91f1582080c85f7651fa32de2186df1b9343b';
+  const QID = '5f0c2a8e-9b1d-4c3e-8f7a-1234567890ab';
+
+  it('passes the pinned router + quoteId to the single broadcast for a routed quote', async () => {
+    const { signer, rec } = build();
+    const q = server.signQuote(makeQuote({ token: USDC, recipient: SELLER, amount: '4000000', quoteId: QID, router: ROUTER }));
+    const r = await signer.pay(q);
+    expect(r.status).toBe('CONFIRMED');
+    expect(rec.calls).toEqual([{ token: USDC, recipient: expect.any(String), amount: '4000000', route: { router: ROUTER, quoteId: QID } }]);
+  });
+
+  it('pays a direct (unrouted) quote with a plain transfer', async () => {
+    const { signer, rec } = build();
+    const q = server.signQuote(makeQuote({ token: USDC, recipient: SELLER, amount: '1000000' }));
+    await signer.pay(q);
+    expect(rec.calls[0]!.route).toBeUndefined();
+  });
+
+  it('refuses a routed quote naming an unpinned router before anything is signed', async () => {
+    const { signer, rec, ledger } = build();
+    const q = server.signQuote(
+      makeQuote({ token: USDC, recipient: SELLER, amount: '1000000', quoteId: QID, router: '0x9999999999999999999999999999999999999999' }),
+    );
+    const r = await signer.pay(q);
+    expect(r).toMatchObject({ status: 'REFUSED', reason: expect.stringContaining('unknown router') });
+    expect(rec.calls).toHaveLength(0);
+    expect(ledger.isQuoteSeen(QID)).toBe(false); // nothing claimed; quote untouched
+  });
+});

@@ -8,6 +8,7 @@
 import { createPublicKey, verify as cryptoVerify } from 'node:crypto';
 import type { SignedQuote } from '../types/quote.js';
 import { canonicalQuoteBytes, stripSig } from './canonical.js';
+import { isKnownRouter } from './routers.js';
 
 // DER SPKI prefix for a raw 32-byte Ed25519 public key.
 const ED25519_SPKI_PREFIX = Buffer.from('302a300506032b6570032100', 'hex');
@@ -59,5 +60,10 @@ export function verifyQuote(q: SignedQuote, opts: VerifyOpts): QuoteVerifyResult
   } catch {
     return { ok: false, reason: 'signature verification threw' };
   }
-  return ok ? { ok: true } : { ok: false, reason: 'invalid serverSig' };
+  if (!ok) return { ok: false, reason: 'invalid serverSig' };
+  // A signed quote may still name a router we don't trust (compromised server): refuse it.
+  if (q.router !== null && q.router !== undefined && !isKnownRouter(q.chainId, q.router)) {
+    return { ok: false, reason: `unknown router ${q.router}` };
+  }
+  return { ok: true };
 }
