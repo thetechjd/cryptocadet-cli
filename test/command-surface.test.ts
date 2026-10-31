@@ -16,11 +16,13 @@ const HUMAN_ONLY_VERBS = [
   'login', 'logout', 'product:list', 'product:create', 'product:update', 'product:disable',
   'payout:set', 'subs:list', 'subs:create', 'subs:cancel', 'history',
   'collector:init', 'collector:serve', 'treasury:init', 'treasury:serve',
+  'handle:set', 'credits:show', 'credits:buy', 'credits:verify',
+  'agent-token:create', 'agent-token:list', 'agent-token:revoke', 'agent-token:clear', 'fetch',
 ];
 
 describe('two-surface separation (instruction 02 acceptance)', () => {
-  it('the agent transport exposes EXACTLY the four agent verbs', () => {
-    expect([...AGENT_TOOL_NAMES].sort()).toEqual(['check_balance', 'dry_run', 'pay', 'quote_payment']);
+  it('the agent transport exposes EXACTLY the five agent verbs', () => {
+    expect([...AGENT_TOOL_NAMES].sort()).toEqual(['check_balance', 'dry_run', 'fetch_paid', 'pay', 'quote_payment']);
   });
 
   it('no human-only verb is also an agent verb (disjoint surfaces)', () => {
@@ -32,6 +34,19 @@ describe('two-surface separation (instruction 02 acceptance)', () => {
     for (const banned of ['rotate', 'sweep', 'unlockAgentPrivateKey', 'setLimit', 'editAllowlist', 'export_key', 'export-key']) {
       expect(agentSrc).not.toContain(banned);
     }
+  });
+
+  it('the agent can spend credits (fetch_paid) but never read, create or clear the token', () => {
+    // The agent tools only receive a fetchPaid function; the keychain token module, card
+    // top-ups and token issuance stay on the human CLI.
+    const agentSrc = src('mcp/agent-tools.ts');
+    for (const banned of ['agent-token', 'readAgentToken', 'storeAgentToken', 'createAgentToken', 'creditsCheckout', 'getKeychain']) {
+      expect(agentSrc).not.toContain(banned);
+    }
+    // fetch_paid pays USDC only through the gated signer (no broadcast primitive in the client).
+    const paid = src('x402/paid-fetch.ts');
+    expect(paid).toContain('deps.signer.pay(');
+    for (const banned of ['sendTransfer(', 'sendRoutedPayment(', 'broadcast(']) expect(paid).not.toContain(banned);
   });
 
   it('the runtime registers tools ONLY via buildAgentTools (single registration path)', () => {

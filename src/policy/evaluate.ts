@@ -96,7 +96,8 @@ export function evaluate(q: QuoteForPolicy, ctx: PolicyContext): Decision {
   const spendable = balance - reserve;
   if (spendable < 0n) return { allow: false, reason: 'balance below reserve' };
   if (amt > spendable)
-    return { allow: false, reason: 'would cross subscription reserve' };
+    // Name the real cause: with nothing reserved the wallet is simply short of funds.
+    return { allow: false, reason: reserve === 0n ? `insufficient balance (${balance} < ${amt})` : 'would cross subscription reserve' };
 
   // 7. Idempotency: a quote already acted on is a no-op, not a re-spend.
   if (ctx.isQuoteSeen(q.quoteId))

@@ -3,7 +3,7 @@
 //
 // Command surface is grouped on two axes: local-vs-remote state, and
 // agent-exposed-vs-human-only. EVERY verb in this file is HUMAN-ONLY — none of them are
-// registered on the agent transport. The agent transport exposes exactly the four verbs
+// registered on the agent transport. The agent transport exposes exactly the five verbs
 // in src/mcp/agent-tools.ts (check_balance, quote_payment, pay, dry_run) and nothing
 // else; `mcp:serve` wires only those.
 
@@ -16,6 +16,7 @@ import { editAllowlist, setRecipient, setLimit, setReserve } from './human-verbs
 import { parseSignedQuote, resolveQuoteRaw } from './checkout.js';
 import { readFileSync } from 'node:fs';
 import { login, logout, makeServerClient } from './seller.js';
+import { agentTokenRef, storeAgentToken, clearAgentToken, readAgentToken } from '../server/agent-token.js';
 import { rotateAgent } from '../revoke/rotate.js';
 import { sweep } from '../revoke/sweep.js';
 import { reserveCheck } from '../subscription/reserve.js';
@@ -91,8 +92,36 @@ const VERBS = [
   'login', 'logout', 'product:list', 'product:create', 'product:update', 'product:disable',
   'payout:set', 'subs:list', 'subs:create', 'subs:cancel', 'history', 'dashboard:sync',
   'collector:init', 'collector:serve', 'treasury:init', 'treasury:serve',
+  'handle:set', 'credits:show', 'credits:buy', 'credits:verify',
+  'agent-token:create', 'agent-token:list', 'agent-token:revoke', 'agent-token:clear', 'fetch',
   'mcp:serve', 'version',
 ];
+
+/** "$4.25" / "4.25" → micro-USD base units (USDC has 6 decimals, 1 USD = 1 USDC). */
+function usdToMicros(raw: string, name: string): string {
+  const v = raw.replace(/^\$/, '');
+  if (!/^\d+(\.\d{1,6})?$/.test(v)) throw new Error(`--${name} must be a USD amount like 5 or 2.50`);
+  return parseUnits(v, 6).toString();
+}
+/** micro-USD → "$4.00" (cents always shown; sub-cent digits kept when present). */
+function microsToUsd(m: string | null): string | null {
+  if (m === null) return null;
+  const [whole, frac = ''] = formatUnits(BigInt(m), 6).split('.');
+  return `$${whole}.${frac.replace(/0+$/, '').padEnd(2, '0')}`;
+}
+
+/** Repeated `--header 'Name: value'` flags. */
+function headerFlags(args: string[]): Record<string, string> {
+  const h: Record<string, string> = {};
+  args.forEach((a, i) => {
+    if (a !== '--header') return;
+    const raw = args[i + 1] ?? '';
+    const at = raw.indexOf(':');
+    if (at <= 0) throw new Error(`--header must be 'Name: value', got: ${raw}`);
+    h[raw.slice(0, at).trim()] = raw.slice(at + 1).trim();
+  });
+  return h;
+}
 
 async function main(): Promise<void> {
   const [verb, ...args] = process.argv.slice(2);
@@ -332,15 +361,104 @@ async function main(): Promise<void> {
     case 'product:list':
       out(await (await makeServerClient()).listProducts());
       break;
-    case 'product:create':
-      out(
-        await (await makeServerClient()).createProduct({
-          name: req(flag(args, 'name'), 'name'),
-          token: req(flag(args, 'token'), 'token').toLowerCase(),
-          unitPrice: req(flag(args, 'price'), 'price'),
-        }),
-      );
+    case 'product:create': {
+      // A --slug puts the product behind the 402 gateway at /v4/g/<handle>/<slug> (USDC-priced;
+      // --token may be omitted). Price: --price in base units, or --usd for dollars.
+      const slug = flag(args, 'slug');
+      const token = flag(args, 'token');
+      if (!token && !slug) throw new Error('missing --token (only gateway products, with --slug, default to USDC)');
+      const contentFile = flag(args, 'content-file');
+      const usd = flag(args, 'usd');
+      const p = await (await makeServerClient()).createProduct({
+        name: req(flag(args, 'name'), 'name'),
+        ...(token ? { token: token.toLowerCase() } : {}),
+        unitPrice: usd !== undefined ? usdToMicros(usd, 'usd') : req(flag(args, 'price'), 'price'),
+        ...(slug ? { slug } : {}),
+        ...(flag(args, 'kind') ? { kind: flag(args, 'kind') as 'hosted' | 'proxy' } : {}),
+        ...(flag(args, 'visibility') ? { visibility: flag(args, 'visibility') as 'paid' | 'free' | 'private' } : {}),
+        ...(flag(args, 'description') ? { description: flag(args, 'description')! } : {}),
+        ...(contentFile ? { content: readFileSync(contentFile, 'utf8') } : {}),
+        ...(flag(args, 'content-type') ? { contentType: flag(args, 'content-type')! } : {}),
+        ...(flag(args, 'origin-url') ? { originUrl: flag(args, 'origin-url')! } : {}),
+      });
+      out(p);
       break;
+    }
+    case 'handle:set':
+      out(await (await makeServerClient()).setHandle(req(flag(args, 'handle'), 'handle')));
+      break;
+
+    // ===================== BUYER: card credits + agent spend tokens (human-only) =====================
+    case 'credits:show': {
+      const c = await (await makeServerClient()).credits();
+      out({ credits: microsToUsd(c.credits), earnings: microsToUsd(c.earnings), creditsMicros: c.credits, entries: c.entries.slice(0, 10) });
+      break;
+    }
+    case 'credits:buy': {
+      // Card top-up on Stripe Checkout. Pay at the printed URL; the webhook credits the balance
+      // (`credits:verify --session` settles it by hand if the webhook is slow).
+      const r = await (await makeServerClient()).creditsCheckout(usdToMicros(req(flag(args, 'usd'), 'usd'), 'usd'));
+      out({ pay: r.url, sessionId: r.sessionId, amount: microsToUsd(r.amount) });
+      break;
+    }
+    case 'credits:verify':
+      out(await (await makeServerClient()).creditsVerify(req(flag(args, 'session'), 'session')));
+      break;
+    case 'agent-token:create': {
+      // Issue a capped spend token for THIS machine's agent and keep it in the OS keychain.
+      // It is never printed: the agent uses it through fetch_paid, and only towards the
+      // configured CryptoCadet origin.
+      const cfg = loadConfig();
+      const perCall = flag(args, 'per-call-usd');
+      const daily = flag(args, 'daily-usd');
+      const sellers = flag(args, 'sellers');
+      const created = await (await makeServerClient()).createAgentToken({
+        name: req(flag(args, 'name'), 'name'),
+        ...(perCall ? { perCallCap: usdToMicros(perCall, 'per-call-usd') } : {}),
+        ...(daily ? { dailyCap: usdToMicros(daily, 'daily-usd') } : {}),
+        ...(sellers ? { allowedSellers: sellers.split(',').map((s) => s.trim()).filter(Boolean) } : {}),
+      });
+      const { token, ...info } = created;
+      await storeAgentToken(agentTokenRef(cfg.keychainRef), token);
+      out({ ...info, perCallCap: microsToUsd(info.perCallCap), dailyCap: microsToUsd(info.dailyCap), storedInKeychain: true });
+      break;
+    }
+    case 'agent-token:list': {
+      const cfg = loadConfig();
+      const tokens = await (await makeServerClient()).listAgentTokens();
+      out({
+        tokenOnThisMachine: (await readAgentToken(agentTokenRef(cfg.keychainRef))) !== null,
+        tokens: tokens.map((t) => ({ ...t, perCallCap: microsToUsd(t.perCallCap), dailyCap: microsToUsd(t.dailyCap) })),
+      });
+      break;
+    }
+    case 'agent-token:revoke':
+      out(await (await makeServerClient()).revokeAgentToken(req(flag(args, 'id'), 'id')));
+      break;
+    case 'agent-token:clear':
+      // Forget the token on this machine (the agent falls back to USDC). Revoke it too
+      // (agent-token:revoke) if it may have leaked.
+      await clearAgentToken(agentTokenRef(loadConfig().keychainRef));
+      out({ ok: true });
+      break;
+    case 'fetch': {
+      // The human twin of the agent's fetch_paid: fetch a URL, paying a 402 if needed.
+      const url = args[0] && !args[0].startsWith('--') ? args[0] : req(flag(args, 'url'), 'url');
+      const rt = await buildRuntime();
+      try {
+        out(
+          await rt.fetchPaid({
+            url,
+            ...(flag(args, 'method') ? { method: flag(args, 'method')! } : {}),
+            ...(flag(args, 'data') !== undefined ? { body: flag(args, 'data')! } : {}),
+            headers: headerFlags(args),
+          }),
+        );
+      } finally {
+        rt.close();
+      }
+      break;
+    }
     case 'product:update': {
       const patch: Record<string, unknown> = {};
       if (flag(args, 'name')) patch['name'] = flag(args, 'name');
@@ -445,7 +563,7 @@ async function main(): Promise<void> {
         break;
       }
       // Foreground: build the live runtime (unlock key, reconcile pending) and register
-      // ONLY the four agent verbs. `--foreground` is the detached child; a bare run is
+      // ONLY the five agent verbs. `--foreground` is the detached child; a bare run is
       // attached. Either way we record our own pid for status/stop and clear it on exit.
       const rt = await buildRuntime();
       writePid(process.pid);

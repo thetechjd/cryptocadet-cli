@@ -1,4 +1,4 @@
-// Real MCP server surface. Wires the four agent-facing verbs (and ONLY those) onto an
+// Real MCP server surface. Wires the five agent-facing verbs (and ONLY those) onto an
 // McpServer so an agent can call them over a transport. The human-only verbs are never
 // registered here — the registry is built from AGENT_TOOL_NAMES, so there is no path by
 // which key/limit/allowlist/rotate/sweep could be exposed to the agent.
@@ -25,6 +25,12 @@ const SCHEMAS: Record<AgentToolName, z.ZodRawShape> = {
   dry_run: {
     quoteId: z.string().describe('a server-issued quote id to evaluate without broadcasting'),
   },
+  fetch_paid: {
+    url: z.string().describe('absolute https URL to fetch (e.g. a CryptoCadet gateway item /v4/g/<seller>/<item>)'),
+    method: z.string().optional().describe('HTTP method, default GET'),
+    body: z.string().optional().describe('request body (string)'),
+    headers: z.record(z.string()).optional().describe('extra request headers (payment headers are set by the flow)'),
+  },
 };
 
 export interface McpServerInfo {
@@ -32,7 +38,7 @@ export interface McpServerInfo {
   version: string;
 }
 
-/** Build an McpServer exposing exactly the four agent verbs, backed by the runtime tools. */
+/** Build an McpServer exposing exactly the five agent verbs, backed by the runtime tools. */
 export function buildMcpServer(tools: Record<AgentToolName, AgentTool>, info: McpServerInfo): McpServer {
   const server = new McpServer({ name: info.name, version: info.version });
 

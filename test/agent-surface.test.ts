@@ -9,8 +9,8 @@ import { makeTestQuoteSigner } from './helpers/quote-signer.js';
 const HUMAN_ONLY = ['add_wallet', 'set_limit', 'edit_allowlist', 'export_key', 'rotate', 'sweep', 'reserve:set'];
 
 describe('agent MCP surface enforcement', () => {
-  it('exposes EXACTLY the four agent-facing verbs', () => {
-    expect([...AGENT_TOOL_NAMES].sort()).toEqual(['check_balance', 'dry_run', 'pay', 'quote_payment']);
+  it('exposes EXACTLY the five agent-facing verbs', () => {
+    expect([...AGENT_TOOL_NAMES].sort()).toEqual(['check_balance', 'dry_run', 'fetch_paid', 'pay', 'quote_payment']);
   });
 
   it('contains no human-only verb', () => {
@@ -21,7 +21,7 @@ describe('agent MCP surface enforcement', () => {
     expect(Object.isFrozen(AGENT_TOOL_NAMES)).toBe(true);
   });
 
-  it('buildAgentTools returns handlers only for the four verbs', () => {
+  it('buildAgentTools returns handlers only for the five verbs', () => {
     const server = makeTestQuoteSigner();
     const signer = new PaymentSigner({
       policy: policyWithUsdc(),
@@ -46,6 +46,6 @@ describe('agent MCP surface enforcement', () => {
       },
       readBalance: async () => '0',
     });
-    expect(Object.keys(tools).sort()).toEqual(['check_balance', 'dry_run', 'pay', 'quote_payment']);
+    expect(Object.keys(tools).sort()).toEqual(['check_balance', 'dry_run', 'fetch_paid', 'pay', 'quote_payment']);
   });
 });

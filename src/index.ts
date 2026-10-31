@@ -19,7 +19,11 @@ export { AGENT_TOOL_NAMES, buildAgentTools } from './mcp/agent-tools.js';
 export type { AgentToolName } from './mcp/agent-tools.js';
 export { buildRuntime } from './runtime.js';
 export { httpServerClient } from './server/client.js';
-export type { QuoteClient, ServerClient, SellerClient, Product, Subscription, HistoryItem, AuthProvider, BalanceSnapshot, TopupAlertInput } from './server/client.js';
+export type {
+  QuoteClient, ServerClient, SellerClient, BuyerClient, Product, Subscription, HistoryItem, AuthProvider,
+  BalanceSnapshot, TopupAlertInput, GatewayProductFields, CreditsSummary, AgentTokenInfo,
+} from './server/client.js';
+export { paidFetch, type PaidFetchDeps, type PaidFetchArgs, type PaidFetchResult } from './x402/paid-fetch.js';
 export { dashboardSync, buildBalanceSnapshots, buildTopupAlerts } from './dashboard/sync.js';
 export type { SyncReport } from './dashboard/sync.js';
 export { buildMcpServer, connectStdio } from './mcp/mcp-server.js';

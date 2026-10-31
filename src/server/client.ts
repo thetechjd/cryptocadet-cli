@@ -73,9 +73,25 @@ export interface TopupAlertInput {
   shortfall: string; // base units
 }
 
+/** Fields that put a product behind the 402 gateway at /v4/g/<handle>/<slug>. */
+export interface GatewayProductFields {
+  slug?: string;
+  kind?: 'hosted' | 'proxy';
+  visibility?: 'paid' | 'free' | 'private';
+  description?: string;
+  /** hosted: the content served after payment */
+  content?: string;
+  contentType?: string;
+  /** proxy: the seller's https origin */
+  originUrl?: string;
+}
+
 export interface SellerClient {
   listProducts(): Promise<Product[]>;
-  createProduct(p: { name: string; token: string; unitPrice: string }): Promise<Product>;
+  /** `token` omitted → the chain's USDC (required for gateway products). */
+  createProduct(p: { name: string; token?: string; unitPrice: string } & GatewayProductFields): Promise<Product>;
+  /** Claim the seller handle used in gateway URLs (/v4/g/<handle>/<slug>). */
+  setHandle(handle: string): Promise<{ id: string; handle: string }>;
   updateProduct(id: string, patch: Partial<Pick<Product, 'name' | 'unitPrice' | 'active'>>): Promise<Product>;
   disableProduct(id: string): Promise<Product>;
   setPayout(token: string, address: string): Promise<{ token: string; address: string }>;
@@ -91,7 +107,40 @@ export interface SellerClient {
   raiseTopupAlerts(alerts: TopupAlertInput[]): Promise<{ ok: true; count: number }>;
 }
 
-export type ServerClient = QuoteClient & SellerClient;
+// ---- BUYER domain: card-funded credits + agent spend tokens ----
+
+export interface CreditsSummary {
+  /** micro-USD available to agents */
+  credits: string;
+  /** micro-USD earned as a seller, awaiting payout */
+  earnings: string;
+  entries: Array<{ id: string; bucket: string; kind: string; amount: string; ref: string | null; at: number }>;
+}
+
+export interface AgentTokenInfo {
+  id: string;
+  name: string;
+  perCallCap: string | null;
+  dailyCap: string | null;
+  allowedSellers: string[] | null;
+  createdAt: number;
+  lastUsedAt: number | null;
+  revoked: boolean;
+}
+
+export interface BuyerClient {
+  credits(): Promise<CreditsSummary>;
+  /** Start a Stripe Checkout top-up; `amount` in micro-USD. Returns the URL to pay at. */
+  creditsCheckout(amount: string): Promise<{ sessionId: string; url: string; amount: string }>;
+  /** Settle a Checkout session (fallback if the webhook hasn't landed yet). */
+  creditsVerify(sessionId: string): Promise<{ status: string; amount?: string }>;
+  /** Issue an agent spend token (caps in micro-USD). The raw token is returned ONCE. */
+  createAgentToken(t: { name: string; perCallCap?: string; dailyCap?: string; allowedSellers?: string[] }): Promise<AgentTokenInfo & { token: string }>;
+  listAgentTokens(): Promise<AgentTokenInfo[]>;
+  revokeAgentToken(id: string): Promise<AgentTokenInfo>;
+}
+
+export type ServerClient = QuoteClient & SellerClient & BuyerClient;
 
 /** Resolves the Authorization header value, or null when unauthenticated. */
 export type AuthProvider = () => Promise<string | null>;
@@ -108,7 +157,17 @@ export function httpServerClient(baseUrl: string, getAuth?: AuthProvider): Serve
     if (auth) headers['authorization'] = auth;
     else if (requireAuth) throw new Error('not authenticated: run `cryptocadet login` first');
     const r = await fetch(`${base}${path}`, { ...init, headers });
-    if (!r.ok) throw new Error(`${init.method ?? 'GET'} ${path} failed: ${r.status}`);
+    if (!r.ok) {
+      // Surface the server's reason ({ error, code }) — "failed: 422" alone is undebuggable.
+      let detail = '';
+      try {
+        const b = (await r.json()) as { error?: string; code?: string };
+        detail = [b.code, b.error].filter(Boolean).join(': ');
+      } catch {
+        /* non-JSON body */
+      }
+      throw new Error(`${init.method ?? 'GET'} ${path} failed: ${r.status}${detail ? ` (${detail})` : ''}`);
+    }
     return (await r.json()) as T;
   }
 
@@ -122,6 +181,7 @@ export function httpServerClient(baseUrl: string, getAuth?: AuthProvider): Serve
     listProducts: () => req('/v4/products', {}, true),
     createProduct: (p) => req('/v4/products', { method: 'POST', body: JSON.stringify(p) }, true),
     updateProduct: (id, patch) => req(`/v4/products/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(patch) }, true),
+    setHandle: (handle) => req('/v4/accounts/me', { method: 'PATCH', body: JSON.stringify({ handle }) }, true),
     disableProduct: (id) => req(`/v4/products/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify({ active: false }) }, true),
     setPayout: (token, address) => req('/v4/payout', { method: 'PUT', body: JSON.stringify({ token, address }) }, true),
     listSubs: () => req('/v4/subscriptions', {}, true),
@@ -133,5 +193,13 @@ export function httpServerClient(baseUrl: string, getAuth?: AuthProvider): Serve
     putPolicy: (policy) => req('/v4/policy', { method: 'PUT', body: JSON.stringify(policy) }, true),
     putBalances: (balances) => req('/v4/balances', { method: 'PUT', body: JSON.stringify(balances) }, true),
     raiseTopupAlerts: (alerts) => req('/v4/topup/alerts', { method: 'POST', body: JSON.stringify({ alerts }) }, true),
+
+    // ---- buyer: credits + agent tokens ----
+    credits: () => req('/v4/credits', {}, true),
+    creditsCheckout: (amount) => req('/v4/credits/checkout', { method: 'POST', body: JSON.stringify({ amount }) }, true),
+    creditsVerify: (sessionId) => req('/v4/credits/verify', { method: 'POST', body: JSON.stringify({ sessionId }) }, true),
+    createAgentToken: (t) => req('/v4/agents', { method: 'POST', body: JSON.stringify(t) }, true),
+    listAgentTokens: () => req('/v4/agents', {}, true),
+    revokeAgentToken: (id) => req(`/v4/agents/${encodeURIComponent(id)}/revoke`, { method: 'POST' }, true),
   };
 }

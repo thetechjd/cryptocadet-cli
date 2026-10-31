@@ -48,11 +48,11 @@ async function connectedClient(readBalance: () => Promise<string> = async () => 
 const HUMAN_ONLY = ['rotate', 'sweep', 'set_limit', 'edit_allowlist', 'export_key', 'reserve:set', 'add_wallet'];
 
 describe('MCP agent transport', () => {
-  it('exposes EXACTLY the four agent verbs — and no human-only verb', async () => {
+  it('exposes EXACTLY the five agent verbs — and no human-only verb', async () => {
     const { client } = await connectedClient();
     const { tools } = await client.listTools();
     const names = tools.map((t) => t.name).sort();
-    expect(names).toEqual(['check_balance', 'dry_run', 'pay', 'quote_payment']);
+    expect(names).toEqual(['check_balance', 'dry_run', 'fetch_paid', 'pay', 'quote_payment']);
     for (const h of HUMAN_ONLY) expect(names).not.toContain(h);
   });
 

@@ -213,7 +213,8 @@ export async function fetchWithPayment(
   }
   if (settlement.status !== 'CONFIRMED' || !settlement.txHash) {
     // Do NOT retry on a refusal/escalation/failure — the policy engine or chain rejected it.
-    throw new Error(`x402: payment not settled (${settlement.reason ?? settlement.status})`);
+    const usdc = settlement.reason ?? settlement.status;
+    throw new Error(`x402: payment not settled (${creditsRefusal ? `credits: ${creditsRefusal}; usdc: ${usdc}` : usdc})`);
   }
 
   const response = await doFetch(url, withHeader(init, 'X-PAYMENT', buildPaymentProof(quoteId, settlement.txHash, redeemToken)));

@@ -1,6 +1,6 @@
 // Assembles the live agent runtime: unlock the key, build provider/wallet, ledger,
 // the gated PaymentSigner with the real broadcaster, the server client, and the
-// four-verb agent tool registry. Reconciles PENDING payments on start.
+// five-verb agent tool registry. Reconciles PENDING payments on start.
 //
 // This is the only place the decrypted key meets the chain. The plaintext key lives in
 // the wallet object for the session and is not written to disk.
@@ -17,6 +17,8 @@ import { liveBroadcaster, liveReadBalance } from './signer/live-broadcaster.js';
 import { reconcilePending } from './signer/reconcile.js';
 import { httpServerClient } from './server/client.js';
 import { readCredential, authHeader } from './server/auth.js';
+import { agentTokenRef, readAgentToken } from './server/agent-token.js';
+import { paidFetch } from './x402/paid-fetch.js';
 import { buildAgentTools, AGENT_TOOL_NAMES, type AgentTool, type AgentToolName } from './mcp/agent-tools.js';
 
 export interface Runtime {
@@ -28,6 +30,8 @@ export interface Runtime {
    *  merchant-supplied signed quote through the SAME `pay()` path the agent tools use —
    *  it adds NO new signing/broadcast call site (see test/single-gate.test.ts). */
   signer: PaymentSigner;
+  /** The x402 client behind the agent's fetch_paid, for the human `fetch` verb. */
+  fetchPaid: (args: Parameters<typeof paidFetch>[1]) => ReturnType<typeof paidFetch>;
   close: () => void;
 }
 
@@ -72,7 +76,17 @@ export async function buildRuntime(): Promise<Runtime> {
   // Reconcile any PENDING rows before serving — never re-pay, only resolve from chain.
   await reconcilePending(ledger, provider, confirmations, (q, t) => server.finalize(q, t).then(() => undefined));
 
-  const tools = buildAgentTools({ policy: policyProvider, signer, server, readBalance });
+  // x402: the credits token only ever goes to the configured CryptoCadet server's origin.
+  const fetchDeps = {
+    chainId: config.chainId,
+    signer,
+    server,
+    agentToken: () => readAgentToken(agentTokenRef(config.keychainRef)),
+    creditsOrigins: [new URL(config.serverBaseUrl).origin],
+  };
+  const fetchPaid = (args: Parameters<typeof paidFetch>[1]) => paidFetch(fetchDeps, args);
+
+  const tools = buildAgentTools({ policy: policyProvider, signer, server, readBalance, fetchPaid });
 
   return {
     agentAddress: config.agentAddress,
@@ -80,6 +94,7 @@ export async function buildRuntime(): Promise<Runtime> {
     toolNames: AGENT_TOOL_NAMES,
     readBalance,
     signer,
+    fetchPaid,
     close: () => ledger.close(),
   };
 }

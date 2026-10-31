@@ -1,10 +1,12 @@
-// The AGENT-FACING MCP surface. EXACTLY four verbs, and only these are ever registered
+// The AGENT-FACING MCP surface. EXACTLY five verbs, and only these are ever registered
 // on the agent transport:
 //
 //   check_balance   — read-only per-token agent-wallet balance and spendable
 //   quote_payment   — proxies to the server to obtain a signed quote id (no pricing/signing here)
 //   pay             — takes a quoteId, runs the full gated flow; returns confirm/refusal/escalation
 //   dry_run         — takes a quoteId, runs evaluate() and prints the tx that WOULD be signed
+//   fetch_paid      — fetch a URL; on HTTP 402 pay it (card-funded credits on the CryptoCadet
+//                     gateway, else USDC through the same gated pay()) and retry once
 //
 // Key, limit, allowlist, rotate, and sweep operations are HUMAN-ONLY and are NOT in this
 // registry (see ../revoke and ../cli). A human-only verb reachable from the agent
@@ -13,10 +15,11 @@
 import type { PaymentSigner, PayResult } from '../signer/signer.js';
 import type { QuoteClient, QuoteRequest } from '../server/client.js';
 import { resolvePolicy, type PolicyRef } from '../types/policy.js';
+import type { PaidFetchArgs, PaidFetchResult } from '../x402/paid-fetch.js';
 
 /** The complete, closed set of agent-facing verb names. Frozen so it cannot be mutated
  *  at runtime to smuggle in a human-only verb. Tests assert this set exactly. */
-export const AGENT_TOOL_NAMES = Object.freeze(['check_balance', 'quote_payment', 'pay', 'dry_run'] as const);
+export const AGENT_TOOL_NAMES = Object.freeze(['check_balance', 'quote_payment', 'pay', 'dry_run', 'fetch_paid'] as const);
 export type AgentToolName = (typeof AGENT_TOOL_NAMES)[number];
 
 export interface AgentToolDeps {
@@ -27,6 +30,8 @@ export interface AgentToolDeps {
   server: QuoteClient;
   /** on-chain balance read, base-unit string */
   readBalance: (token: string) => Promise<string>;
+  /** x402 client (x402/paid-fetch.ts); its USDC payments go through `signer.pay`. */
+  fetchPaid?: (args: PaidFetchArgs) => Promise<PaidFetchResult>;
 }
 
 export interface AgentTool {
@@ -90,6 +95,23 @@ export function buildAgentTools(deps: AgentToolDeps): Record<AgentToolName, Agen
         if (!quoteId) throw new Error('dry_run requires a quoteId');
         const quote = await deps.server.getQuoteById(quoteId);
         return deps.signer.dryRun(quote);
+      },
+    },
+    fetch_paid: {
+      name: 'fetch_paid',
+      description:
+        'Fetch an https URL. If it answers 402 Payment Required, pay it (card-funded credits on a CryptoCadet gateway, ' +
+        'otherwise USDC within local policy) and retry once. Returns status, body and what was paid.',
+      handler: async (args) => {
+        if (!deps.fetchPaid) throw new Error('fetch_paid is not configured');
+        const url = String(args['url'] ?? '');
+        if (!url) throw new Error('fetch_paid requires a url');
+        return deps.fetchPaid({
+          url,
+          ...(args['method'] !== undefined ? { method: String(args['method']) } : {}),
+          ...(args['body'] !== undefined ? { body: String(args['body']) } : {}),
+          ...(args['headers'] && typeof args['headers'] === 'object' ? { headers: args['headers'] as Record<string, string> } : {}),
+        });
       },
     },
   };

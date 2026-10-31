@@ -47,6 +47,14 @@ describe('evaluate() — adversarial, fail-closed', () => {
     expect(d).toMatchObject({ allow: false, reason: 'would cross subscription reserve' });
   });
 
+  it('4b. empty wallet with nothing reserved -> DENY as insufficient balance (not a reserve breach)', () => {
+    const d = evaluate(
+      quote({ amount: '1000000' }),
+      ctx({ policy: policyWithUsdc({ subscriptionReserve: {} }), walletBalance: () => '0' }),
+    );
+    expect(d).toMatchObject({ allow: false, reason: 'insufficient balance (0 < 1000000)' });
+  });
+
   it('7. forged quote with attacker recipient -> DENY at recipient allowlist', () => {
     const d = evaluate(quote({ recipient: ATTACKER, amount: '1000000' }), ctx());
     expect(d).toMatchObject({ allow: false });
