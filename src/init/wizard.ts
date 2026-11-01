@@ -210,7 +210,7 @@ export async function runInit(opts: InitOptions, deps: InitDeps): Promise<InitSu
     io.print('');
     io.print('Fund it one of two ways:');
     io.print(`  1. Crypto: send USDC (and a little ETH for gas) on Base to ${summary.agentAddress ?? 'the agent address'}`);
-    io.print('  2. Card:   cryptocadet login --value <api key>');
+    io.print('  2. Card:   cryptocadet login            (your cryptocadet.app email + password)');
     io.print('             cryptocadet credits:buy --usd 5');
     io.print('             cryptocadet agent-token:create --name my-agent --daily-usd 5');
     io.print('');

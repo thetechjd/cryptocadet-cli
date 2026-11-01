@@ -45,3 +45,30 @@ export function silentIO(): WizardIO {
     },
   };
 }
+
+/** Ask for a secret without echoing it (falls back to reading one line from piped stdin). */
+export async function promptHidden(question: string): Promise<string> {
+  if (!process.stdin.isTTY) {
+    const rl = readline.createInterface({ input: process.stdin });
+    try {
+      for await (const line of rl) return line;
+      return '';
+    } finally {
+      rl.close();
+    }
+  }
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout, terminal: true });
+  const iface = rl as unknown as { _writeToOutput: (s: string) => void };
+  let muted = false;
+  const write = iface._writeToOutput.bind(rl);
+  iface._writeToOutput = (s: string) => {
+    if (!muted || s.includes('\n') || s.includes('\r')) write(muted ? '\n' : s);
+  };
+  try {
+    const pending = rl.question(`${question}: `);
+    muted = true;
+    return await pending;
+  } finally {
+    rl.close();
+  }
+}

@@ -8,12 +8,12 @@
 import { fileURLToPath } from 'node:url';
 import { parseUnits, formatUnits } from 'ethers';
 import { runInit, refuseMainWalletKey, type InitOptions } from '../init/wizard.js';
-import { createReadlineIO, silentIO } from '../init/prompts.js';
+import { createReadlineIO, promptHidden, silentIO } from '../init/prompts.js';
 import { renderBanner } from '../brand/banner.js';
 import { editAllowlist, setRecipient, setLimit, setReserve } from './human-verbs.js';
 import { parseSignedQuote, resolveQuoteRaw } from './checkout.js';
 import { readFileSync } from 'node:fs';
-import { login, logout, makeServerClient } from './seller.js';
+import { login, loginWithAccount, logout, makeServerClient } from './seller.js';
 import { agentTokenRef, storeAgentToken, clearAgentToken, readAgentToken } from '../server/agent-token.js';
 import { rotateAgent } from '../revoke/rotate.js';
 import { sweep } from '../revoke/sweep.js';
@@ -363,9 +363,22 @@ async function main(): Promise<void> {
     }
 
     // ===================== REMOTE state — server postgres via API =====================
-    case 'login':
-      out(await login((flag(args, 'kind') ?? 'apikey') as 'apikey' | 'jwt', req(flag(args, 'value'), 'value')));
+    case 'login': {
+      // Default: your CryptoCadet web account (same email + password as cryptocadet.app).
+      // `--value <api key>` still stores a raw API key / JWT directly.
+      const value = flag(args, 'value');
+      if (value) {
+        out(await login((flag(args, 'kind') ?? 'apikey') as 'apikey' | 'jwt', value));
+        break;
+      }
+      const io = createReadlineIO();
+      const email = flag(args, 'email') ?? (await io.prompt('Email'));
+      if (!email.trim()) throw new Error('an email is required (or pass --value <api key>)');
+      const password = process.env.CRYPTOCADET_PASSWORD || (await promptHidden('Password'));
+      if (!password) throw new Error('a password is required');
+      out(await loginWithAccount(email, password));
       break;
+    }
     case 'logout':
       out(await logout());
       break;

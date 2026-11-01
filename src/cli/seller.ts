@@ -5,6 +5,7 @@
 import { loadConfig } from '../config/config.js';
 import { httpServerClient, type ServerClient } from '../server/client.js';
 import { readCredential, storeCredential, clearCredential, authHeader, type CredentialKind } from '../server/auth.js';
+import { loginWithPassword } from '../server/account-login.js';
 
 /** Build a server client whose auth header comes from the keychain-stored credential. */
 export async function makeServerClient(): Promise<ServerClient> {
@@ -25,4 +26,15 @@ export async function logout(): Promise<{ ok: true }> {
   const cfg = loadConfig();
   await clearCredential(cfg.serverAuthRef);
   return { ok: true };
+}
+
+/** Sign in with a CryptoCadet web account and store its v4 API key in the keychain. */
+export async function loginWithAccount(email: string, password: string): Promise<{ ok: true; kind: 'apikey'; email: string; handle: string | null }> {
+  const cfg = loadConfig();
+  const apiKey = await loginWithPassword(email, password);
+  await storeCredential(cfg.serverAuthRef, { kind: 'apikey', value: apiKey });
+  // Confirm the key works against this CLI's server and show who we are.
+  const me = await fetch(`${cfg.serverBaseUrl.replace(/\/$/, '')}/v4/accounts/me`, { headers: { authorization: authHeader({ kind: 'apikey', value: apiKey }) } });
+  const body = me.ok ? ((await me.json()) as { email?: string | null; handle?: string | null }) : {};
+  return { ok: true, kind: 'apikey', email: body.email ?? email.trim().toLowerCase(), handle: body.handle ?? null };
 }

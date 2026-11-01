@@ -33,8 +33,8 @@ Fund the agent one of two ways:
 ```bash
 # 1. Crypto: send USDC (and a little ETH for gas) on Base to the printed agent address.
 
-# 2. Card: buy credits and give the agent a capped token (kept in the OS keychain).
-cryptocadet login --value <api key>
+# 2. Card: sign in with your cryptocadet.app account, buy credits, give the agent a capped token.
+cryptocadet login                     # same email + password as cryptocadet.app/v4/signup
 cryptocadet credits:buy --usd 5       # opens Stripe Checkout
 cryptocadet agent-token:create --name my-agent --per-call-usd 2 --daily-usd 5
 ```
@@ -112,7 +112,10 @@ above a `requireHumanAbove` threshold if you set one (none by default).
 recipients), `topup:request`, `rotate` (`--and-sweep --to`), `sweep --to <addr>`,
 `reserve:check`.
 
-**Seller (server API, no key risk):** `login`/`logout`, `handle:set`,
+**Account:** `login` (your cryptocadet.app email + password; `--email` to skip the prompt,
+`CRYPTOCADET_PASSWORD` for scripts, or `--value <api key>` to store a raw key), `logout`.
+
+**Seller (server API, no key risk):** `handle:set`,
 `product:list|create|update|disable` (`product:create --slug --kind hosted|proxy --usd
 --content-file` puts an item behind the 402 gateway), `payout:set`, `subs:list|create|cancel`,
 `history`.
