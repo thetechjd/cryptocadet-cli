@@ -33,6 +33,9 @@ export interface Product {
   /** unit price in token base units, decimal string (never a number) */
   unitPrice: string;
   active: boolean;
+  /** gateway items: the URL slug (/v4/g/<handle>/<slug>) */
+  slug?: string | null;
+  visibility?: 'paid' | 'free' | 'private';
 }
 
 export interface Subscription {
@@ -86,12 +89,29 @@ export interface GatewayProductFields {
   originUrl?: string;
 }
 
+/** A private item shared with one person (they pay with card credits). */
+export interface Grant {
+  id: string;
+  email: string;
+  mode: 'unlock' | 'per_query';
+  /** unlock mode: whether they have paid their one-time unlock */
+  unlocked: boolean;
+  createdAt: number;
+}
+
 export interface SellerClient {
   listProducts(): Promise<Product[]>;
   /** `token` omitted → the chain's USDC (required for gateway products). */
   createProduct(p: { name: string; token?: string; unitPrice: string } & GatewayProductFields): Promise<Product>;
   /** Claim the seller handle used in gateway URLs (/v4/g/<handle>/<slug>). */
   setHandle(handle: string): Promise<{ id: string; handle: string }>;
+  /** Private items: share with one person by email (pay once to unlock, or per query). */
+  listGrants(productId: string): Promise<Grant[]>;
+  addGrant(productId: string, email: string, mode: 'unlock' | 'per_query'): Promise<Grant>;
+  revokeGrant(productId: string, grantId: string): Promise<{ id: string; revoked: boolean }>;
+  /** The HMAC secret proxied calls to your origin are signed with (X-CryptoCadet-Signature). */
+  originSecret(): Promise<{ originSecret: string }>;
+  rotateOriginSecret(): Promise<{ originSecret: string }>;
   updateProduct(id: string, patch: Partial<Pick<Product, 'name' | 'unitPrice' | 'active'>>): Promise<Product>;
   disableProduct(id: string): Promise<Product>;
   setPayout(token: string, address: string): Promise<{ token: string; address: string }>;
@@ -182,6 +202,13 @@ export function httpServerClient(baseUrl: string, getAuth?: AuthProvider): Serve
     createProduct: (p) => req('/v4/products', { method: 'POST', body: JSON.stringify(p) }, true),
     updateProduct: (id, patch) => req(`/v4/products/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(patch) }, true),
     setHandle: (handle) => req('/v4/accounts/me', { method: 'PATCH', body: JSON.stringify({ handle }) }, true),
+    listGrants: (productId) => req(`/v4/products/${encodeURIComponent(productId)}/grants`, {}, true),
+    addGrant: (productId, email, mode) =>
+      req(`/v4/products/${encodeURIComponent(productId)}/grants`, { method: 'POST', body: JSON.stringify({ email, mode }) }, true),
+    revokeGrant: (productId, grantId) =>
+      req(`/v4/products/${encodeURIComponent(productId)}/grants/${encodeURIComponent(grantId)}`, { method: 'DELETE' }, true),
+    originSecret: () => req('/v4/accounts/me/origin-secret', {}, true),
+    rotateOriginSecret: () => req('/v4/accounts/me/origin-secret/rotate', { method: 'POST' }, true),
     disableProduct: (id) => req(`/v4/products/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify({ active: false }) }, true),
     setPayout: (token, address) => req('/v4/payout', { method: 'PUT', body: JSON.stringify({ token, address }) }, true),
     listSubs: () => req('/v4/subscriptions', {}, true),

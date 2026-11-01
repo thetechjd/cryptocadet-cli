@@ -38,4 +38,22 @@ describe('httpServerClient', () => {
     expect(calls[0]?.init.method).toBe('POST');
     expect(calls[1]?.url).toBe('https://api.example/v4/subscriptions/sub-9/cancel');
   });
+
+  it('builds the private-sharing and origin-secret calls', async () => {
+    const calls = stubFetch();
+    const client = httpServerClient('https://api.example', async () => 'Bearer t');
+    await client.addGrant('p-1', 'client@example.com', 'unlock');
+    await client.listGrants('p-1');
+    await client.revokeGrant('p-1', 'g-9');
+    await client.originSecret();
+    await client.rotateOriginSecret();
+    expect(calls.map((c) => `${c.init.method ?? 'GET'} ${c.url}`)).toEqual([
+      'POST https://api.example/v4/products/p-1/grants',
+      'GET https://api.example/v4/products/p-1/grants',
+      'DELETE https://api.example/v4/products/p-1/grants/g-9',
+      'GET https://api.example/v4/accounts/me/origin-secret',
+      'POST https://api.example/v4/accounts/me/origin-secret/rotate',
+    ]);
+    expect(JSON.parse(String(calls[0]!.init.body))).toEqual({ email: 'client@example.com', mode: 'unlock' });
+  });
 });

@@ -115,8 +115,11 @@ recipients), `topup:request`, `rotate` (`--and-sweep --to`), `sweep --to <addr>`
 **Account:** `login` (your cryptocadet.app email + password; `--email` to skip the prompt,
 `CRYPTOCADET_PASSWORD` for scripts, or `--value <api key>` to store a raw key), `logout`.
 
+**API key:** `api-key` prints your account's key (stored by `login`) for direct API calls,
+also shown on cryptocadet.app/v4/api-key.
+
 **Seller (server API, no key risk):** `handle:set`,
-`product:list|create|update|disable` (`product:create --slug --kind hosted|proxy --usd
+`product:list|create|update|disable`, `share:add --item <slug|id> --email --mode unlock|per_query` / `share:list` / `share:revoke --id` (private items), `origin-secret [--rotate]` (verify `X-CryptoCadet-Signature` on your API) (`product:create --slug --kind hosted|proxy --usd
 --content-file` puts an item behind the 402 gateway), `payout:set`, `subs:list|create|cancel`,
 `history`.
 

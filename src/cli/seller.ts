@@ -38,3 +38,11 @@ export async function loginWithAccount(email: string, password: string): Promise
   const body = me.ok ? ((await me.json()) as { email?: string | null; handle?: string | null }) : {};
   return { ok: true, kind: 'apikey', email: body.email ?? email.trim().toLowerCase(), handle: body.handle ?? null };
 }
+
+/** An item by id or by its gateway slug (/v4/g/<handle>/<slug>). */
+export async function resolveItem(client: Pick<ServerClient, 'listProducts'>, ref: string): Promise<string> {
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(ref)) return ref;
+  const match = (await client.listProducts()).find((p) => p.slug === ref);
+  if (!match) throw new Error(`no item with slug "${ref}" (see \`cryptocadet product:list\`)`);
+  return match.id;
+}

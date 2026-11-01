@@ -13,8 +13,9 @@ import { renderBanner } from '../brand/banner.js';
 import { editAllowlist, setRecipient, setLimit, setReserve } from './human-verbs.js';
 import { parseSignedQuote, resolveQuoteRaw } from './checkout.js';
 import { readFileSync } from 'node:fs';
-import { login, loginWithAccount, logout, makeServerClient } from './seller.js';
+import { login, loginWithAccount, logout, makeServerClient, resolveItem } from './seller.js';
 import { agentTokenRef, storeAgentToken, clearAgentToken, readAgentToken } from '../server/agent-token.js';
+import { readCredential } from '../server/auth.js';
 import { rotateAgent } from '../revoke/rotate.js';
 import { sweep } from '../revoke/sweep.js';
 import { reserveCheck } from '../subscription/reserve.js';
@@ -105,7 +106,7 @@ const VERBS = [
   'login', 'logout', 'product:list', 'product:create', 'product:update', 'product:disable',
   'payout:set', 'subs:list', 'subs:create', 'subs:cancel', 'history', 'dashboard:sync',
   'collector:init', 'collector:serve', 'treasury:init', 'treasury:serve',
-  'handle:set', 'credits:show', 'credits:buy', 'credits:verify',
+  'handle:set', 'api-key', 'share:add', 'share:list', 'share:revoke', 'origin-secret', 'credits:show', 'credits:buy', 'credits:verify',
   'agent-token:create', 'agent-token:list', 'agent-token:revoke', 'agent-token:clear', 'fetch',
   'version',
 ];
@@ -411,6 +412,39 @@ async function main(): Promise<void> {
     case 'handle:set':
       out(await (await makeServerClient()).setHandle(req(flag(args, 'handle'), 'handle')));
       break;
+    case 'api-key': {
+      // Your account's API key (stored in the OS keychain by `cryptocadet login`), for calling
+      // the HTTP API directly: Authorization: Bearer <key>. Also on cryptocadet.app/v4/api-key.
+      const cred = await readCredential(loadConfig().serverAuthRef);
+      if (!cred) throw new Error('not signed in: run `cryptocadet login` first');
+      out({ apiKey: cred.value, kind: cred.kind, use: 'Authorization: Bearer <apiKey>', keep: 'secret: anyone with it can act as your account' });
+      break;
+    }
+    case 'share:add': {
+      // Share a private item with one person (they pay with card credits).
+      const client = await makeServerClient();
+      const id = await resolveItem(client, req(flag(args, 'item'), 'item'));
+      const mode = (flag(args, 'mode') ?? 'per_query') as 'unlock' | 'per_query';
+      if (mode !== 'unlock' && mode !== 'per_query') throw new Error('--mode must be unlock (pay once) or per_query');
+      out(await client.addGrant(id, req(flag(args, 'email'), 'email'), mode));
+      break;
+    }
+    case 'share:list': {
+      const client = await makeServerClient();
+      out(await client.listGrants(await resolveItem(client, req(flag(args, 'item'), 'item'))));
+      break;
+    }
+    case 'share:revoke': {
+      const client = await makeServerClient();
+      out(await client.revokeGrant(await resolveItem(client, req(flag(args, 'item'), 'item')), req(flag(args, 'id'), 'id')));
+      break;
+    }
+    case 'origin-secret': {
+      // The HMAC secret your origin uses to verify X-CryptoCadet-Signature on proxied calls.
+      const client = await makeServerClient();
+      out(has(args, 'rotate') ? await client.rotateOriginSecret() : await client.originSecret());
+      break;
+    }
 
     // ===================== BUYER: card credits + agent spend tokens (human-only) =====================
     case 'credits:show': {
